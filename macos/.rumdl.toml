@@ -1,0 +1,20 @@
+[global]
+disable = ["MD032", "MD013", "MD024", "MD026"]
+line-length = 240
+
+[MD007]
+indent = 4
+style = "fixed"
+
+[MD012]
+maximum = 2
+
+[MD022]
+lines-above = 0
+lines-below = 0
+
+[MD033]
+allowed-elements = ["br", "sup", "a", "details", "summary"]
+
+[per-file-ignores]
+"CLAUDE.md" = ["MD040"]
