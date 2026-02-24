@@ -193,19 +193,49 @@ void        karukan_save_learning(KarukanSession* session);
 
 ### macOS データパス
 
+**XDG ではなく macOS 標準パス（`~/Library/Application Support/`）を採用する。**
+
+`karukan-im`（Linux）は XDG パス（`~/.local/share/karukan-im/`）を使用しているが、
+macOS の Input Method Extension には以下の理由から XDG は適用できない。
+
+| 観点 | XDG | macOS 標準 |
+|---|---|---|
+| 環境変数の継承 | シェル起動 → ユーザー環境から継承 | **macOS がシステムとして起動 → 環境変数なし** |
+| `$XDG_CONFIG_HOME` | シェルで設定可 | IME プロセスには未設定・到達しない |
+| サンドボックス対応 | `~/.config/` はコンテナ外 → **アクセス不可** | `~/Library/Application Support/` は自動リダイレクト ✓ |
+| Finder / Time Machine | 不可視・管理しにくい | 可視・除外設定が容易 |
+
+> **サンドボックスとパスの関係**: 将来 App Sandbox を有効化した場合、
+> `~/Library/Application Support/Karukan/` は自動的に
+> `~/Library/Containers/<bundle-id>/Data/Library/Application Support/Karukan/` に
+> リダイレクトされ、コードの変更なく動作する。
+> `~/.config/` や `~/.local/share/` はコンテナ外のため即座に Permission Denied になる。
+
+テストおよび CI では `KARUKAN_DATA_DIR` 環境変数でパスをオーバーライドできるようにし、
+XDG 的な使い方も開発時に限り可能とする（本番 IME プロセスでは無視される）。
+
 ```rust
 // platform/paths.rs
-// ~/Library/Application Support/Karukan/
-fn app_support_dir() -> PathBuf { ... }
+pub fn app_support_dir() -> PathBuf {
+    // テスト・CI 用オーバーライド
+    if let Ok(p) = std::env::var("KARUKAN_DATA_DIR") {
+        return PathBuf::from(p);
+    }
+    // macOS 標準パス（本番）
+    // ~/Library/Application Support/Karukan/
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("~/.local/share"))
+        .join("Karukan")
+}
 
 // ~/Library/Application Support/Karukan/learning.tsv
-fn learning_cache_path() -> PathBuf { ... }
+pub fn learning_cache_path() -> PathBuf { ... }
 
 // ~/Library/Application Support/Karukan/models/
-fn models_dir() -> PathBuf { ... }
+pub fn models_dir() -> PathBuf { ... }
 
 // ~/Library/Application Support/Karukan/user_dict.txt
-fn user_dict_path() -> PathBuf { ... }
+pub fn user_dict_path() -> PathBuf { ... }
 ```
 
 ### Metal バックエンド
