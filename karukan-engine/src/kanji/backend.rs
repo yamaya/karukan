@@ -30,12 +30,47 @@ pub fn build_jinen_prompt(katakana: &str, context: &str) -> String {
     )
 }
 
-/// Clean model output by trimming whitespace.
+/// Clean model output: strip jinen reading annotations and trim whitespace.
+///
+/// The model outputs in jinen format: `{surface}({hiragana_reading}` per segment.
+/// This function removes the `({reading}` annotations to return only the surface.
+///
+/// Examples:
+/// - `"日本語(にほんご"` → `"日本語"`
+/// - `"日本語(にほんご入力(にゅうりょく"` → `"日本語入力"`
+/// - `"宝箱(カラー"` → `"宝箱(カラー"` (katakana after `(` is kept)
 ///
 /// Special tokens (BOS/EOS) are handled at the decode level via
 /// `skip_special_tokens` rather than string replacement.
 pub fn clean_model_output(text: &str) -> String {
-    text.trim().to_string()
+    let mut result = String::new();
+    let mut chars = text.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '(' {
+            // Strip `(` only when followed by hiragana (reading annotation).
+            // `(` followed by anything else (e.g. katakana, kanji, ASCII) is kept as-is.
+            if chars.peek().map(|&c| is_hiragana(c)).unwrap_or(false) {
+                // Skip hiragana characters of the reading.
+                while chars.peek().map(|&c| is_hiragana(c)).unwrap_or(false) {
+                    chars.next();
+                }
+                // Skip optional closing `)`.
+                if chars.peek() == Some(&')') {
+                    chars.next();
+                }
+                continue;
+            }
+        }
+        result.push(ch);
+    }
+
+    result.trim().to_string()
+}
+
+/// Returns true for hiragana characters (including long vowel mark ー).
+fn is_hiragana(c: char) -> bool {
+    matches!(c, '\u{3041}'..='\u{3096}' | '\u{309D}'..='\u{309F}' | '\u{30FC}')
 }
 
 /// Inference backend configuration (llama.cpp GGUF format with external tokenizer)
@@ -182,6 +217,33 @@ impl KanaKanjiConverter {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_clean_model_output_strips_reading() {
+        assert_eq!(clean_model_output("日本語(にほんご"), "日本語");
+        assert_eq!(
+            clean_model_output("日本語(にほんご入力(にゅうりょく"),
+            "日本語入力"
+        );
+    }
+
+    #[test]
+    fn test_clean_model_output_keeps_non_hiragana_paren() {
+        // `(` followed by katakana or other chars must NOT be stripped.
+        assert_eq!(clean_model_output("宝箱(カラー"), "宝箱(カラー");
+        assert_eq!(clean_model_output("C++"), "C++");
+    }
+
+    #[test]
+    fn test_clean_model_output_optional_closing_paren() {
+        assert_eq!(clean_model_output("漢字(かんじ)"), "漢字");
+    }
+
+    #[test]
+    fn test_clean_model_output_plain_text() {
+        assert_eq!(clean_model_output("日本語"), "日本語");
+        assert_eq!(clean_model_output("  hello  "), "hello");
+    }
 
     #[test]
 
