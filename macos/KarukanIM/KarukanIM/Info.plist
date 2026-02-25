@@ -1,5 +1,62 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
-<dict/>
+<dict>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+
+	<!-- TIS がこのキーで Input Method として認識する -->
+	<key>ComponentCategory</key>
+	<string>TIInputSourceTypeKeyboardInputMethodWithDictionary</string>
+
+	<!-- 入力モード定義 -->
+	<key>ComponentInputModeDict</key>
+	<dict>
+		<key>tsInputModeListKey</key>
+		<dict>
+			<key>com.example.inputmethod.karukan.hiragana</key>
+			<dict>
+				<key>TISInputSourceIsASCIICapable</key>
+				<false/>
+				<key>TISInputSourceType</key>
+				<string>com.apple.input-method.Roman</string>
+				<key>tsInputMethodCharacterRepertoireKey</key>
+				<array>
+					<string>Hira</string>
+					<string>Kana</string>
+					<string>Latn</string>
+				</array>
+				<key>TISIntendedLanguage</key>
+				<string>ja</string>
+			</dict>
+		</dict>
+	</dict>
+
+	<!-- IMKServer(name:) と一致させる -->
+	<key>InputMethodConnectionName</key>
+	<string>com.example.inputmethod.KarukanIM_Connection</string>
+
+	<!-- 入力コントローラークラス名。NSPrincipalClass ではない -->
+	<key>InputMethodServerControllerClass</key>
+	<string>KarukanInputController</string>
+
+	<!-- 識別子 (Bundle ID と一致させる) -->
+	<key>TISInputSourceID</key>
+	<string>com.example.inputmethod.KarukanIM</string>
+
+	<!-- UI非表示 (Dock・メニューバーに出さない) -->
+	<key>LSUIElement</key>
+	<true/>
+
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+</dict>
 </plist>

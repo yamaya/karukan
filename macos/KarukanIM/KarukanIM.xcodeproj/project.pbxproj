@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		5436F5EF2F4EDCC5003263AA /* InputMethodKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5436F5EE2F4EDCC5003263AA /* InputMethodKit.framework */; };
+		5436F6012F4EDD2F003263AA /* InputMethodKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5436F5EE2F4EDCC5003263AA /* InputMethodKit.framework */; };
 		5490CA992F4ECF7D00990600 /* KarukanIMExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 5490CA922F4ECF7D00990600 /* KarukanIMExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
@@ -108,6 +109,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5436F6012F4EDD2F003263AA /* InputMethodKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -174,10 +176,12 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 5490CA852F4ECC0500990600 /* Build configuration list for PBXNativeTarget "KarukanIM" */;
 			buildPhases = (
+				5436F6022F4EDD2F003263AA /* ShellScript */,
 				5490CA602F4ECC0200990600 /* Sources */,
 				5490CA612F4ECC0200990600 /* Frameworks */,
 				5490CA622F4ECC0200990600 /* Resources */,
 				5490CA9E2F4ECF7D00990600 /* Embed App Extensions */,
+				5436F6032F4F0000003263AA /* Install to Input Methods */,
 			);
 			buildRules = (
 			);
@@ -361,6 +365,43 @@
 			shellPath = /bin/sh;
 			shellScript = "#!/usr/bin/env bash\nset -euo pipefail\n\nexport PATH=\"$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"\n\nREPO=\"${SRCROOT}/../../\"\nDYLIB=\"libkarukan_macos.dylib\"\n\nif [ \"${CONFIGURATION}\" = \"Release\" ]; then\n    CARGO_FLAGS=\"--release\"\n    RUST_DIR=\"${REPO}target/release\"\nelse\n    CARGO_FLAGS=\"\"\n    RUST_DIR=\"${REPO}target/debug\"\nfi\n\ncd \"${REPO}\"\ncargo build -p karukan-macos ${CARGO_FLAGS}\n\nDEST=\"${BUILT_PRODUCTS_DIR}/${FRAMEWORKS_FOLDER_PATH}/${DYLIB}\"\nmkdir -p \"${BUILT_PRODUCTS_DIR}/${FRAMEWORKS_FOLDER_PATH}\"\ncp \"${RUST_DIR}/${DYLIB}\" \"${DEST}\"\ninstall_name_tool -id \"@rpath/${DYLIB}\" \"${DEST}\"\necho \"✓ ${DYLIB} → ${DEST}\"\n";
 		};
+		5436F6022F4EDD2F003263AA /* ShellScript */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "#!/usr/bin/env bash\nset -euo pipefail\n\nexport PATH=\"$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"\n\nREPO=\"${SRCROOT}/../../\"\nDYLIB=\"libkarukan_macos.dylib\"\n\nif [ \"${CONFIGURATION}\" = \"Release\" ]; then\n    CARGO_FLAGS=\"--release\"\n    RUST_DIR=\"${REPO}target/release\"\nelse\n    CARGO_FLAGS=\"\"\n    RUST_DIR=\"${REPO}target/debug\"\nfi\n\ncd \"${REPO}\"\ncargo build -p karukan-macos ${CARGO_FLAGS}\n\nDEST=\"${BUILT_PRODUCTS_DIR}/${FRAMEWORKS_FOLDER_PATH}/${DYLIB}\"\nmkdir -p \"${BUILT_PRODUCTS_DIR}/${FRAMEWORKS_FOLDER_PATH}\"\ncp \"${RUST_DIR}/${DYLIB}\" \"${DEST}\"\ninstall_name_tool -id \"@rpath/${DYLIB}\" \"${DEST}\"\necho \"\\u2713 ${DYLIB} \\u2192 ${DEST}\"\n";
+		};
+		5436F6032F4F0000003263AA /* Install */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Install to Input Methods";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "#!/usr/bin/env bash\nset -euo pipefail\n\n# ビルド完了後に ~/Library/Input Methods/ にインストール\nINPUT_METHODS_DIR=\"$HOME/Library/Input Methods\"\nmkdir -p \"$INPUT_METHODS_DIR\"\nrm -rf \"$INPUT_METHODS_DIR/${PRODUCT_NAME}.app\"\ncp -R \"${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app\" \"$INPUT_METHODS_DIR/\"\necho \"\\u2713 Installed to $INPUT_METHODS_DIR/${PRODUCT_NAME}.app\"\n";
+		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -538,30 +579,34 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = KarukanIM/KarukanIM.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = CFSF629G3P;
 				ENABLE_APP_SANDBOX = YES;
-				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_HARDENED_RUNTIME = NO;
 				ENABLE_PREVIEWS = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
-				GENERATE_INFOPLIST_FILE = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../karukan-macos/include";
 				INFOPLIST_FILE = KarukanIM/Info.plist;
-				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.karukan.KarukanIM;
+				OTHER_LDFLAGS = (
+					"-L$(SRCROOT)/../../target/debug",
+					"-lkarukan_macos",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.inputmethod.KarukanIM;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = KarukanIM/KarukanBridge.h;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 			};
@@ -572,30 +617,34 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = KarukanIM/KarukanIM.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = CFSF629G3P;
 				ENABLE_APP_SANDBOX = YES;
-				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_HARDENED_RUNTIME = NO;
 				ENABLE_PREVIEWS = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
-				GENERATE_INFOPLIST_FILE = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../karukan-macos/include";
 				INFOPLIST_FILE = KarukanIM/Info.plist;
-				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.karukan.KarukanIM;
+				OTHER_LDFLAGS = (
+					"-L$(SRCROOT)/../../target/release",
+					"-lkarukan_macos",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.inputmethod.KarukanIM;
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				REGISTER_APP_GROUPS = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = KarukanIM/KarukanBridge.h;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
 				SWIFT_VERSION = 5.0;
 			};
@@ -704,7 +753,7 @@
 					"-L$(SRCROOT)/../../target/debug",
 					"-lkarukan_macos",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.karukan.KarukanIM.KarukanIMExtension;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.inputmethod.KarukanIM.KarukanIMExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -741,7 +790,7 @@
 					"-L$(SRCROOT)/../../target/debug",
 					"-lkarukan_macos",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.karukan.KarukanIM.KarukanIMExtension;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.inputmethod.KarukanIM.KarukanIMExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;

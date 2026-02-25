@@ -31,6 +31,10 @@
 	<key>NSPrincipalClass</key>
 	<string>KarukanIMExtension.KarukanInputController</string>
 
+	<!-- 入力ソースのカテゴリ。これがないと入力ソース一覧に表示されない -->
+	<key>ComponentCategory</key>
+	<string>TIInputSourceTypeKeyboardInputMethodWithDictionary</string>
+
 	<!-- 入力モード定義 -->
 	<key>ComponentInputModeDict</key>
 	<dict>
@@ -42,6 +46,12 @@
 				<false/>
 				<key>TISInputSourceType</key>
 				<string>com.apple.input-method.Roman</string>
+				<key>TsInputMethodCharacterRepertoireKey</key>
+				<array>
+					<string>Latn</string>
+					<string>Hira</string>
+					<string>Kana</string>
+				</array>
 			</dict>
 		</dict>
 	</dict>
