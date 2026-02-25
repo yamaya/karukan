@@ -32,6 +32,11 @@ final class KarukanInputController: IMKInputController {
     /// 候補パネル（IMKServer と 1:1 で生成）。
     private var candidatesPanel: IMKCandidates?
 
+    /// 直近の有効な入力クライアント。
+    /// パネルクリック時は client() が無効になるため、
+    /// handle(_:client:) / activateServer(_:) で更新して保持する。
+    private var currentSender: Any?
+
     // -----------------------------------------------------------------------
     // MARK: - Lifecycle
     // -----------------------------------------------------------------------
@@ -75,6 +80,7 @@ final class KarukanInputController: IMKInputController {
     // -----------------------------------------------------------------------
 
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
+        currentSender = sender
         // 候補パネル表示中はキーイベントをパネルに委譲する。
         // interpretKeyEvents は Up/Down しか動かないため、Space/Tab は moveDown/Up で代替する。
         if let panel = candidatesPanel, panel.isVisible(), event.type == .keyDown {
@@ -175,13 +181,15 @@ final class KarukanInputController: IMKInputController {
         }
         _ = karukan_select_candidate(session, idx)
 
-        // コミットテキストをクライアントに送る
+        // コミットテキストをクライアントに送る。
+        // パネルクリック後は client() が無効になるため currentSender を優先する。
+        let c = (currentSender ?? client()) as AnyObject
         if karukan_has_commit(session) != 0,
            let ptr = karukan_get_commit(session) {
             let committed = String(cString: ptr)
             if !committed.isEmpty {
                 logger.debug("candidateSelected commit: '\(committed)'")
-                (client() as AnyObject).insertText?(
+                c.insertText?(
                     committed,
                     replacementRange: NSRange(location: NSNotFound, length: 0)
                 )
@@ -189,7 +197,7 @@ final class KarukanInputController: IMKInputController {
         }
 
         candidatesPanel?.hide()
-        (client() as AnyObject).setMarkedText?(
+        c.setMarkedText?(
             "",
             selectionRange: NSRange(location: 0, length: 0),
             replacementRange: NSRange(location: NSNotFound, length: 0)
@@ -203,7 +211,7 @@ final class KarukanInputController: IMKInputController {
         let text = candidateString.string
         logger.debug("candidateSelectionChanged: '\(text)'")
 
-        let c = client() as AnyObject
+        let c = (currentSender ?? client()) as AnyObject
         let attrStr = NSMutableAttributedString(string: text)
         attrStr.addAttribute(
             .underlineStyle,
@@ -223,6 +231,7 @@ final class KarukanInputController: IMKInputController {
 
     override func activateServer(_ sender: Any!) {
         super.activateServer(sender)
+        currentSender = sender
         logger.info("activateServer")
     }
 

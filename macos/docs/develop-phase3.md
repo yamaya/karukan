@@ -544,8 +544,7 @@ HuggingFace から GGUF を自動ダウンロードする（`karukan-engine` の
 [x] 候補を選択 [Return] → 「日本語」がコミットされる
 [x] "nihongo" [Space] [Space] → 次の候補に移動する
 [x] "nihongo" [Space] [Escape] → ひらがな編集状態に戻る（「にほんご」preedit 表示）
-[~] 候補ウィンドウでクリック → candidateSelected が呼ばれてコミットされる
-    - コミットはされなかった
+[x] 候補ウィンドウでクリック → candidateSelected が呼ばれてコミットされる
 ```
 
 ### 学習キャッシュ

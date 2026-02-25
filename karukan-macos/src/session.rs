@@ -473,6 +473,8 @@ impl KarukanSession {
         self.candidate_cache.items.clear();
         self.candidate_cache.cursor = 0;
         self.state = SessionState::Empty;
+        self.romaji.reset();
+        self.input_buf.clear();
         self.update_preedit("");
         true
     }
