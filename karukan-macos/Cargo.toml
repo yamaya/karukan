@@ -1,0 +1,20 @@
+[package]
+name = "karukan-macos"
+version = "0.1.0"
+edition.workspace = true
+description = "Japanese Input Method Engine for macOS"
+license.workspace = true
+
+[lib]
+name = "karukan_macos"
+crate-type = ["cdylib", "lib"] # cdylib: Xcode組み込み用, lib: テスト用
+
+[dependencies]
+karukan-engine.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+dirs = "5"
+
+[dev-dependencies]
+tempfile.workspace = true
