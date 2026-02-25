@@ -75,6 +75,42 @@ final class KarukanInputController: IMKInputController {
     // -----------------------------------------------------------------------
 
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
+        // 候補パネル表示中はキーイベントをパネルに委譲する。
+        // interpretKeyEvents は Up/Down しか動かないため、Space/Tab は moveDown/Up で代替する。
+        if let panel = candidatesPanel, panel.isVisible(), event.type == .keyDown {
+            switch event.keyCode {
+            case 53: // Escape → 変換キャンセル（Rust に渡してひらがな preedit に戻す）
+                guard let session else { return true }
+                _ = karukan_push_key(session, KarukanMacOSKey.escape.rawValue)
+                updateClientState(client: sender)
+                panel.hide()
+            case 51: // Backspace → 変換キャンセルのみ（文字削除なし）
+                guard let session else { return true }
+                _ = karukan_push_key(session, KarukanMacOSKey.escape.rawValue)
+                updateClientState(client: sender)
+                panel.hide()
+            case 49: // Space / Shift-Space
+                if event.modifierFlags.contains(.shift) {
+                    panel.moveUp(nil)
+                } else {
+                    panel.moveDown(nil)
+                }
+            case 48: // Tab / Shift-Tab
+                if event.modifierFlags.contains(.shift) {
+                    panel.moveUp(nil)
+                } else {
+                    panel.moveDown(nil)
+                }
+            case 125: // Down → 次候補
+                panel.moveDown(nil)
+            case 126: // Up → 前候補
+                panel.moveUp(nil)
+            default: // Return など → パネルに任せる（candidateSelected が呼ばれる）
+                panel.interpretKeyEvents([event])
+            }
+            return true
+        }
+
         guard initialized, let session else { return false }
         guard event.type == .keyDown else { return false }
 
@@ -160,6 +196,27 @@ final class KarukanInputController: IMKInputController {
         )
     }
 
+    /// パネル上の選択候補が変わったとき（矢印キー・クリックによるフォーカス移動）に呼ばれる。
+    /// preedit を選択中の候補文字列で更新する。
+    /// commit はここでは行わない（確定時は candidateSelected が呼ばれる）。
+    override func candidateSelectionChanged(_ candidateString: NSAttributedString!) {
+        let text = candidateString.string
+        logger.debug("candidateSelectionChanged: '\(text)'")
+
+        let c = client() as AnyObject
+        let attrStr = NSMutableAttributedString(string: text)
+        attrStr.addAttribute(
+            .underlineStyle,
+            value: NSUnderlineStyle.single.rawValue,
+            range: NSRange(text.startIndex..., in: text)
+        )
+        c.setMarkedText?(
+            attrStr,
+            selectionRange: NSRange(location: text.count, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+    }
+
     // -----------------------------------------------------------------------
     // MARK: - Server Events
     // -----------------------------------------------------------------------
@@ -195,7 +252,7 @@ final class KarukanInputController: IMKInputController {
     // -----------------------------------------------------------------------
 
     /// 候補数に応じてパネルを表示 / 非表示する。
-    /// Rust 側のカーソル位置に合わせてパネルの選択行も同期する。
+    /// パネルの選択はパネル自身が管理し、candidateSelectionChanged で preedit に反映する。
     private func updateCandidatesPanel(sender: Any?) {
         guard let panel = candidatesPanel, let session else { return }
         let count = karukan_get_candidate_count(session)
@@ -203,21 +260,6 @@ final class KarukanInputController: IMKInputController {
             panel.update()
             if !panel.isVisible() {
                 panel.show()
-            } else {
-                // IMKCandidates:selectCandidate not working here in KarukanIM
-                // Temporary workaounrd
-                let cursor = karukan_get_candidate_cursor(session)
-                for _ in 0..<Int(cursor) {
-                    switch panel.panelType() {
-                    case kIMKSingleColumnScrollingCandidatePanel:
-                        panel.moveDown(self)
-                        // TODO: Shiftキーが押されていたら`moveUp`するかぁ
-                    case kIMKSingleRowSteppingCandidatePanel:
-                        panel.moveRight(self)
-                    default:
-                        panel.moveDown(self)
-                    }
-                }
             }
         } else {
             panel.hide()

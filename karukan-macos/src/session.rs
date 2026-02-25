@@ -430,6 +430,11 @@ impl KarukanSession {
                 self.cancel_conversion();
                 true
             }
+            KarukanKey::Backspace if matches!(self.state, SessionState::Conversion(_)) => {
+                self.cancel_conversion(); // Conversion → Composing（ひらがな復元）
+                self.do_backspace();      // Composing の末尾1文字削除
+                true
+            }
             KarukanKey::Space | KarukanKey::Tab | KarukanKey::Down
                 if matches!(self.state, SessionState::Conversion(_)) =>
             {
@@ -514,7 +519,10 @@ impl KarukanSession {
                 self.input_buf.delete_before_cursor();
             }
             BackspaceResult::Empty => {
-                // Nothing to delete.
+                // romaji は空だが input_buf に内容があれば直接削除する。
+                // cancel_conversion() 後は romaji がリセットされているため
+                // RemovedOutput が返らず、ここに落ちる。
+                self.input_buf.delete_before_cursor();
             }
         }
 
