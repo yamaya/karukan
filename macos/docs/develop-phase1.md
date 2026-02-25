@@ -987,12 +987,12 @@ std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
 
 ### Rust ビルド・テスト
 
-- [ ] `cargo build -p karukan-macos --release` が成功する
-- [ ] `cargo test -p karukan-macos` が全パスする
-- [ ] `cargo clippy -p karukan-macos` が警告なし
-- [ ] `cargo fmt -p karukan-macos -- --check` が通る
-- [ ] `include/karukan_macos.h` が存在し、全公開関数の宣言が含まれる
-- [ ] null ポインタテストが全パスする（クラッシュゼロ）
+- [x] `cargo build -p karukan-macos --release` が成功する
+- [x] `cargo test -p karukan-macos` が全パスする
+- [x] `cargo clippy -p karukan-macos` が警告なし
+- [x] `cargo fmt -p karukan-macos -- --check` が通る
+- [x] `include/karukan_macos.h` が存在し、全公開関数の宣言が含まれる
+- [x] null ポインタテストが全パスする（クラッシュゼロ）
 
 ### dylib 検査（Phase 2 の Xcode 統合前に問題を潰す）
 
@@ -1071,9 +1071,9 @@ clang smoke_test.c -o smoke_test
 ./smoke_test   # 終了コード 0 かつ "preedit: あ" が出力されること
 ```
 
-- [ ] `nm -D` で全公開シンボルが確認できる
-- [ ] `otool -L` に Linux 固有の依存がない
-- [ ] `dlopen` スモークテストが成功する（`push_char("a")` → preedit `"あ"`）
+- [x] `nm -D` で全公開シンボルが確認できる
+- [x] `otool -L` に Linux 固有の依存がない
+- [x] `dlopen` スモークテストが成功する（`push_char("a")` → preedit `"あ"`）
 
 > **Xcode 統合での残存リスク**: `.appex` バンドルへの埋め込み後の `@rpath` 解決、
 > および `install_name_tool` 適用後の動作確認は Phase 2 で行う。

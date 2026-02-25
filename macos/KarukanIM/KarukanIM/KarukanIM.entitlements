@@ -4,6 +4,9 @@
 <dict>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
+	<!-- HuggingFace からモデルをダウンロードするために必要 -->
+	<key>com.apple.security.network.client</key>
+	<true/>
 	<!-- IMKServer が Mach IPC で接続するために必要 -->
 	<key>com.apple.security.temporary-exception.mach-register.global-name</key>
 	<string>com.example.inputmethod.KarukanIM_Connection</string>

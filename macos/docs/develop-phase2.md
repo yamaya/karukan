@@ -96,11 +96,11 @@ karukan/
 2. **File > New > Project…**
 3. **macOS > App** を選択
 4. 以下を設定:
-   - **Product Name**: `KarukanIM`
-   - **Organization Identifier**: `com.example.karukan`（後で変更可）
-   - **Bundle Identifier**: `com.example.karukan.KarukanIM`
-   - **Language**: Swift
-   - **User Interface**: SwiftUI（またはNone）
+    - **Product Name**: `KarukanIM`
+    - **Organization Identifier**: `com.example.karukan`（後で変更可）
+    - **Bundle Identifier**: `com.example.karukan.KarukanIM`
+    - **Language**: Swift
+    - **User Interface**: SwiftUI（またはNone）
 5. **Save location**: `karukan/macos/`（`karukan-macos/` と同階層）
 
 > **注意**: Save 後、プロジェクトファイルが `macos/KarukanIM.xcodeproj` になることを確認する。
@@ -109,10 +109,10 @@ karukan/
 
 1. **File > New > Target…**
 2. **macOS > Input Method Extension** を選択
-   - ない場合は **macOS > Generic Extension** を選択し、後述の Info.plist を手動設定
+    - ない場合は **macOS > Generic Extension** を選択し、後述の Info.plist を手動設定
 3. 以下を設定:
-   - **Product Name**: `KarukanIMExtension`
-   - **Bundle Identifier**: `com.example.karukan.KarukanIM.KarukanIMExtension`
+    - **Product Name**: `KarukanIMExtension`
+    - **Bundle Identifier**: `com.example.karukan.KarukanIM.KarukanIMExtension`
 4. **Activate** ダイアログが出たら **Cancel**（スキーム切り替えは手動で行う）
 
 ---
@@ -281,7 +281,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 ```
 
 **Build Settings**:
-```
+
+```text
 HEADER_SEARCH_PATHS = $(SRCROOT)/../../karukan-macos/include
 ```
 
@@ -339,14 +340,16 @@ echo "✓ Done: ${DEST}"
 ```
 
 **Input Files**（Xcode が変更検知に使用）:
-```
+
+```text
 $(SRCROOT)/../../karukan-macos/src/session.rs
 $(SRCROOT)/../../karukan-macos/src/ffi/mod.rs
 $(SRCROOT)/../../Cargo.lock
 ```
 
 **Output Files**:
-```
+
+```text
 $(BUILT_PRODUCTS_DIR)/$(FRAMEWORKS_FOLDER_PATH)/libkarukan_macos.dylib
 ```
 
@@ -805,6 +808,7 @@ Rust 側の `tracing` は `stderr` に出力する設定になっている（`ff
 Extension のプロセスの stderr は Console.app の "Messages" に表示される。
 
 ログレベルを上げる場合:
+
 ```bash
 # launchctl setenv は Extension プロセスには伝わらない場合がある
 # Install.sh の前に設定する必要がある
@@ -858,33 +862,33 @@ IME インストール・有効化後、以下の順番で動作確認する。
 ### 基本動作チェックリスト
 
 ```text
-[ ] 1. TextEdit を開き、Karukan 入力ソースに切り替える
+[x] 1. TextEdit を開き、Karukan 入力ソースに切り替える
 
-[ ] 2. "a" を押す
+[x] 2. "a" を押す
       期待: preedit に "あ"（下線付き）が表示される
 
-[ ] 3. "i" を押す
+[x] 3. "i" を押す
       期待: preedit が "あい" になる
 
-[ ] 4. Return を押す
+[x] 4. Return を押す
       期待: "あい" がコミットされ、preedit が消える
 
-[ ] 5. "k" を押す
+[x] 5. "k" を押す
       期待: preedit に "k" が表示される（未確定ローマ字）
 
-[ ] 6. "a" を押す
+[x] 6. "a" を押す
       期待: preedit が "か" になる
 
-[ ] 7. "nnnichiha" と順に押す
+[x] 7. "nnnichiha" と順に押す
       期待: preedit が "んにちは" になる（"konnnichiha" で "こんにちは"）
 
-[ ] 8. Backspace を押す
+[x] 8. Backspace を押す
       期待: preedit の最後の文字が削除される
 
-[ ] 9. Backspace を連打して preedit を空にする
+[x] 9. Backspace を連打して preedit を空にする
       期待: preedit が消える（下線も消える）
 
-[ ] 10. Escape を押す（preedit に何か入力した後）
+[x] 10. Escape を押す（preedit に何か入力した後）
        期待: preedit がキャンセルされてコミットなし
 
 [ ] 11. フォーカスを他のアプリに移す（Command+Tab 等）
@@ -897,22 +901,22 @@ IME インストール・有効化後、以下の順番で動作確認する。
 
 ### Xcode ビルド
 
-- [ ] `cargo build -p karukan-macos` 成功後、Xcode で `Cmd+B` が成功する
-- [ ] `KarukanIM.app` の `PlugIns/KarukanIMExtension.appex/Contents/Frameworks/` に
+- [x] `cargo build -p karukan-macos` 成功後、Xcode で `Cmd+B` が成功する
+- [x] `KarukanIM.app` の `PlugIns/KarukanIMExtension.appex/Contents/Frameworks/` に
       `libkarukan_macos.dylib` が存在する
-- [ ] `otool -D libkarukan_macos.dylib` の出力が `@rpath/libkarukan_macos.dylib`
-- [ ] `otool -l KarukanIMExtension` に `LC_RPATH: @loader_path/../Frameworks` が含まれる
+- [x] `otool -D libkarukan_macos.dylib` の出力が `@rpath/libkarukan_macos.dylib`
+- [x] `otool -l KarukanIMExtension` に `LC_RPATH: @loader_path/../Frameworks` が含まれる
 
 ### IME 動作
 
-- [ ] システム設定 > キーボード > 入力ソース に "Karukan" が表示される
-- [ ] TextEdit でローマ字入力 → ひらがなの preedit（下線付き）が表示される
-- [ ] Enter キーでひらがながコミットされる
-- [ ] Escape キーで入力がキャンセルされる
-- [ ] Backspace キーで1文字ずつ削除できる
-- [ ] "konnnichiha" → preedit に "こんにちは" が表示される
-- [ ] 未確定状態でフォーカスを失うとコミットされる
-- [ ] クラッシュなし（Console.app にクラッシュログが出ない）
+- [x] システム設定 > キーボード > 入力ソース に "Karukan" が表示される
+- [x] TextEdit でローマ字入力 → ひらがなの preedit（下線付き）が表示される
+- [x] Enter キーでひらがながコミットされる
+- [x] Escape キーで入力がキャンセルされる
+- [x] Backspace キーで1文字ずつ削除できる
+- [x] "konnnichiha" → preedit に "こんにちは" が表示される
+- [x] 未確定状態でフォーカスを失うとコミットされる
+- [x] クラッシュなし（Console.app にクラッシュログが出ない）
 
 ---
 

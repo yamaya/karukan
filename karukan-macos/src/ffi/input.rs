@@ -66,3 +66,21 @@ pub extern "C" fn karukan_push_key(session: *mut KarukanSession, key: u32) -> c_
     }))
     .unwrap_or(0)
 }
+
+/// Select the candidate at `index` and commit it immediately.
+///
+/// Used by `candidateSelected(_:)` in Swift when the user clicks a candidate
+/// in the `IMKCandidates` panel.
+///
+/// Returns `1` on success, `0` if not in Conversion state or index is out of range.
+/// Returns `0` if `session` is `NULL`.
+#[unsafe(no_mangle)]
+pub extern "C" fn karukan_select_candidate(
+    session: *mut KarukanSession,
+    index: u32,
+) -> c_int {
+    std::panic::catch_unwind(AssertUnwindSafe(|| {
+        if ffi_mut!(session, 0).select_candidate(index as usize) { 1 } else { 0 }
+    }))
+    .unwrap_or(0)
+}

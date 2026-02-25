@@ -1,8 +1,5 @@
 // KarukanInputController.swift
 // KarukanIM — IMKit サーバープロセス本体
-//
-// KarukanIM.app 自体が IMKit サーバー。Extension は使わない。
-// NSPrincipalClass = "KarukanInputController" (ObjC 名) として Info.plist に登録する。
 
 import Cocoa
 import InputMethodKit
@@ -32,6 +29,9 @@ final class KarukanInputController: IMKInputController {
     /// バックグラウンドで init 後、メインスレッドで true に設定される。
     private var initialized: Bool = false
 
+    /// 候補パネル（IMKServer と 1:1 で生成）。
+    private var candidatesPanel: IMKCandidates?
+
     // -----------------------------------------------------------------------
     // MARK: - Lifecycle
     // -----------------------------------------------------------------------
@@ -47,7 +47,13 @@ final class KarukanInputController: IMKInputController {
         session = ptr
         logger.debug("session created: \(String(describing: ptr))")
 
-        // リソースロード（辞書・学習キャッシュ。Phase 3: モデル追加予定）
+        // 候補パネルを生成（スクロールリスト形式）
+        candidatesPanel = IMKCandidates(
+            server: server,
+            panelType: kIMKSingleColumnScrollingCandidatePanel
+        )
+
+        // リソースロード（辞書・学習キャッシュ・モデル）
         let capturedSession = ptr
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let ret = karukan_session_init(capturedSession)
@@ -81,6 +87,7 @@ final class KarukanInputController: IMKInputController {
             let consumed = karukan_push_key(session, key.rawValue) != 0
             logger.debug("push_key(\(key.rawValue)) consumed=\(consumed)")
             updateClientState(client: sender)
+            updateCandidatesPanel(sender: sender)
             return consumed
         }
 
@@ -95,7 +102,62 @@ final class KarukanInputController: IMKInputController {
         }
         logger.debug("push_char('\(chars)') consumed=\(consumed)")
         updateClientState(client: sender)
+        updateCandidatesPanel(sender: sender)
         return consumed
+    }
+
+    // -----------------------------------------------------------------------
+    // MARK: - IMKCandidates データソース
+    // -----------------------------------------------------------------------
+
+    /// Rust から候補を取得して IMKCandidates に渡す。
+    override func candidates(_ sender: Any!) -> [Any]! {
+        guard let session else { return [] }
+        let count = Int(karukan_get_candidate_count(session))
+        logger.debug("candidates() count=\(count)")
+        return (0..<count).compactMap { idx in
+            karukan_get_candidate(session, UInt32(idx)).map { String(cString: $0) }
+        }
+    }
+
+    /// 候補ウィンドウでクリックまたは Return で選択された。
+    override func candidateSelected(_ candidateString: NSAttributedString!) {
+        guard let session else { return }
+
+        let text = candidateString.string
+        logger.debug("candidateSelected: '\(text)'")
+
+        // 文字列からインデックスを逆引きして select_candidate を呼ぶ
+        let count = Int(karukan_get_candidate_count(session))
+        var idx: UInt32 = 0
+        for i in 0..<count {
+            if let ptr = karukan_get_candidate(session, UInt32(i)),
+               String(cString: ptr) == text {
+                idx = UInt32(i)
+                break
+            }
+        }
+        _ = karukan_select_candidate(session, idx)
+
+        // コミットテキストをクライアントに送る
+        if karukan_has_commit(session) != 0,
+           let ptr = karukan_get_commit(session) {
+            let committed = String(cString: ptr)
+            if !committed.isEmpty {
+                logger.debug("candidateSelected commit: '\(committed)'")
+                (client() as AnyObject).insertText?(
+                    committed,
+                    replacementRange: NSRange(location: NSNotFound, length: 0)
+                )
+            }
+        }
+
+        candidatesPanel?.hide()
+        (client() as AnyObject).setMarkedText?(
+            "",
+            selectionRange: NSRange(location: 0, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
     }
 
     // -----------------------------------------------------------------------
@@ -113,6 +175,7 @@ final class KarukanInputController: IMKInputController {
             super.deactivateServer(sender)
             return
         }
+        candidatesPanel?.hide()
         if karukan_is_empty(session) == 0 {
             forceCommit(client: sender)
         }
@@ -122,6 +185,7 @@ final class KarukanInputController: IMKInputController {
 
     override func commitComposition(_ sender: Any!) {
         logger.info("commitComposition")
+        candidatesPanel?.hide()
         forceCommit(client: sender)
         super.commitComposition(sender)
     }
@@ -129,6 +193,36 @@ final class KarukanInputController: IMKInputController {
     // -----------------------------------------------------------------------
     // MARK: - Private Helpers
     // -----------------------------------------------------------------------
+
+    /// 候補数に応じてパネルを表示 / 非表示する。
+    /// Rust 側のカーソル位置に合わせてパネルの選択行も同期する。
+    private func updateCandidatesPanel(sender: Any?) {
+        guard let panel = candidatesPanel, let session else { return }
+        let count = karukan_get_candidate_count(session)
+        if count > 0 {
+            panel.update()
+            if !panel.isVisible() {
+                panel.show()
+            } else {
+                // IMKCandidates:selectCandidate not working here in KarukanIM
+                // Temporary workaounrd
+                let cursor = karukan_get_candidate_cursor(session)
+                for _ in 0..<Int(cursor) {
+                    switch panel.panelType() {
+                    case kIMKSingleColumnScrollingCandidatePanel:
+                        panel.moveDown(self)
+                        // TODO: Shiftキーが押されていたら`moveUp`するかぁ
+                    case kIMKSingleRowSteppingCandidatePanel:
+                        panel.moveRight(self)
+                    default:
+                        panel.moveDown(self)
+                    }
+                }
+            }
+        } else {
+            panel.hide()
+        }
+    }
 
     private func updateClientState(client: Any?) {
         guard let session else { return }

@@ -101,6 +101,50 @@ pub extern "C" fn karukan_is_empty(session: *const KarukanSession) -> c_int {
 }
 
 // ---------------------------------------------------------------------------
+// Candidates
+// ---------------------------------------------------------------------------
+
+/// Returns the number of conversion candidates available.
+///
+/// Returns `0` if `session` is `NULL` or there is no active conversion.
+#[unsafe(no_mangle)]
+pub extern "C" fn karukan_get_candidate_count(session: *const KarukanSession) -> u32 {
+    std::panic::catch_unwind(|| {
+        ffi_ref!(session, 0).candidate_cache.items.len() as u32
+    })
+    .unwrap_or(0)
+}
+
+/// Returns a pointer to the null-terminated UTF-8 text of the `index`-th candidate.
+///
+/// The pointer is valid until the next `karukan_push_*` or
+/// `karukan_select_candidate` call on the same session.
+/// Returns `NULL` if `session` is `NULL` or `index` is out of range.
+#[unsafe(no_mangle)]
+pub extern "C" fn karukan_get_candidate(
+    session: *const KarukanSession,
+    index: u32,
+) -> *const c_char {
+    std::panic::catch_unwind(|| {
+        let s = ffi_ref!(session, std::ptr::null());
+        s.candidate_cache
+            .items
+            .get(index as usize)
+            .map(|c| c.as_ptr())
+            .unwrap_or(std::ptr::null())
+    })
+    .unwrap_or(std::ptr::null())
+}
+
+/// Returns the index of the currently selected candidate.
+///
+/// Returns `0` if `session` is `NULL`.
+#[unsafe(no_mangle)]
+pub extern "C" fn karukan_get_candidate_cursor(session: *const KarukanSession) -> u32 {
+    std::panic::catch_unwind(|| ffi_ref!(session, 0).candidate_cache.cursor).unwrap_or(0)
+}
+
+// ---------------------------------------------------------------------------
 // Persistence
 // ---------------------------------------------------------------------------
 

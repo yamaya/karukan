@@ -77,15 +77,24 @@ static INIT_LOGGING: Once = Once::new();
 
 /// Initialise the `tracing` subscriber exactly once per process.
 ///
-/// Reads `RUST_LOG` for the filter level; defaults to `warn`.
+/// Routes logs to OSLog (visible in Console.app and `log stream`) so that
+/// Rust-side events (model loading, conversion, errors) appear alongside
+/// Swift's OSLog output under subsystem `com.example.karukan`.
+///
+/// Default level: `info` so that model download/load progress is visible.
+/// Override with `RUST_LOG` (e.g. `RUST_LOG=debug`).
 pub(crate) fn init_logging() {
     INIT_LOGGING.call_once(|| {
-        tracing_subscriber::fmt()
-            .with_env_filter(
-                tracing_subscriber::EnvFilter::try_from_default_env()
-                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn")),
-            )
-            .with_writer(std::io::stderr)
+        use tracing_subscriber::prelude::*;
+        let oslog_layer = tracing_oslog::OsLogger::new(
+            "com.example.karukan",
+            "rust",
+        );
+        let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+        tracing_subscriber::registry()
+            .with(filter)
+            .with(oslog_layer)
             .init();
     });
 }

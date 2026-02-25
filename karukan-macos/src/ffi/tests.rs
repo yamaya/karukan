@@ -12,7 +12,9 @@ use std::sync::Mutex;
 use super::KarukanSession;
 use super::input::{karukan_push_char, karukan_push_key};
 use super::lifecycle::{karukan_session_free, karukan_session_init, karukan_session_new};
+use super::input::karukan_select_candidate;
 use super::query::{
+    karukan_get_candidate, karukan_get_candidate_count, karukan_get_candidate_cursor,
     karukan_get_commit, karukan_get_preedit, karukan_get_preedit_caret, karukan_get_preedit_len,
     karukan_has_commit, karukan_is_empty, karukan_save_learning,
 };
@@ -111,6 +113,27 @@ impl TestSession {
 
     fn is_empty(&self) -> bool {
         karukan_is_empty(self.0) == 1
+    }
+
+    fn candidate_count(&self) -> u32 {
+        karukan_get_candidate_count(self.0)
+    }
+
+    fn candidate_cursor(&self) -> u32 {
+        karukan_get_candidate_cursor(self.0)
+    }
+
+    fn candidate_text(&self, index: u32) -> Option<&str> {
+        let ptr = karukan_get_candidate(self.0, index);
+        if ptr.is_null() {
+            return None;
+        }
+        // SAFETY: pointer is valid until the next push_* call.
+        Some(unsafe { std::ffi::CStr::from_ptr(ptr) }.to_str().unwrap_or(""))
+    }
+
+    fn select_candidate(&self, index: u32) -> bool {
+        karukan_select_candidate(self.0, index) == 1
     }
 }
 
@@ -402,17 +425,20 @@ fn test_unknown_key_does_not_consume() {
 }
 
 // ---------------------------------------------------------------------------
-// Space key test (Phase 1: full-width space)
+// Space key test (Phase 3: triggers conversion)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_space_key_inserts_fullwidth_space() {
+fn test_space_key_triggers_conversion() {
     let s = TestSession::new();
-    s.push_char("a"); // composing
+    s.push_char("a"); // composing "あ"
+    // Space should be consumed (triggers conversion attempt).
     assert!(s.push_key(KEY_SPACE));
-    // Preedit should contain あ + 全角スペース
-    assert!(s.preedit().contains('あ'));
-    assert!(s.preedit().contains('\u{3000}'));
+    // In Conversion state: preedit shows the first candidate (at minimum the hiragana itself).
+    // The session must not be empty (candidate or preedit is set).
+    assert!(!s.is_empty());
+    // Candidate cache should have at least 1 entry (fallback = the hiragana reading).
+    assert!(s.candidate_count() > 0);
 }
 
 // ---------------------------------------------------------------------------

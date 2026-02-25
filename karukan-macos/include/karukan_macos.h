@@ -11,8 +11,9 @@
  *
  * Pointer lifetimes
  * -----------------
- * Pointers returned by karukan_get_preedit() and karukan_get_commit() are
- * valid until the next karukan_push_* call on the same session.  Copy them
+ * Pointers returned by karukan_get_preedit(), karukan_get_commit(), and
+ * karukan_get_candidate() are valid until the next karukan_push_* or
+ * karukan_select_candidate call on the same session.  Copy them
  * immediately using String(cString:) in Swift.
  */
 
@@ -172,14 +173,45 @@ int karukan_is_empty(const KarukanSession* session);
  */
 void karukan_save_learning(KarukanSession* session);
 
-/*
- * --- Phase 3 additions (not yet declared) ---
+/* -------------------------------------------------------------------------
+ * Candidates
  *
- * uint32_t karukan_get_candidate_count(const KarukanSession* session);
- * const char* karukan_get_candidate(const KarukanSession* session, uint32_t index);
- * const char* karukan_get_candidate_annotation(const KarukanSession* session, uint32_t index);
- * uint32_t karukan_get_candidate_cursor(const KarukanSession* session);
+ * Call these after karukan_push_key(KARUKAN_KEY_SPACE) to populate the
+ * candidate panel.  Returned pointers are valid until the next karukan_push_*
+ * or karukan_select_candidate call on the same session.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Returns the number of conversion candidates available.
+ *
+ * Returns 0 if session is NULL or there is no active conversion.
  */
+uint32_t karukan_get_candidate_count(const KarukanSession* session);
+
+/**
+ * Returns a pointer to the null-terminated UTF-8 text of the index-th candidate.
+ *
+ * Returns NULL if session is NULL or index is out of range.
+ * Copy immediately: String(cString: karukan_get_candidate(session, i))
+ */
+const char* karukan_get_candidate(const KarukanSession* session, uint32_t index);
+
+/**
+ * Returns the index of the currently selected candidate.
+ *
+ * Returns 0 if session is NULL.
+ */
+uint32_t karukan_get_candidate_cursor(const KarukanSession* session);
+
+/**
+ * Select the candidate at index and commit it immediately.
+ *
+ * Used by candidateSelected(_:) in Swift when the user clicks a candidate
+ * in the IMKCandidates panel.
+ * Returns 1 on success, 0 if not in Conversion state or index is out of range.
+ * Returns 0 if session is NULL.
+ */
+int karukan_select_candidate(KarukanSession* session, uint32_t index);
 
 #ifdef __cplusplus
 }

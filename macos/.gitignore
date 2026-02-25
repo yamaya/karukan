@@ -1,6 +1,7 @@
 DerivedData/
 build/
 xcuserdata/
+UserInterfaceState.xcuserstate
 
 *.ipa
 *.dSYM.zip
