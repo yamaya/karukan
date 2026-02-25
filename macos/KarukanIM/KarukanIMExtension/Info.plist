@@ -2,10 +2,48 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>EXAppExtensionAttributes</key>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+
+	<key>CFBundleName</key>
+	<string>Karukan</string>
+
+	<key>CFBundleDisplayName</key>
+	<string>Karukan</string>
+
+	<!-- IMK: 接続名。ホストアプリの InputMethodConnectionName と一致させる -->
+	<key>InputMethodConnectionName</key>
+	<string>KarukanIM</string>
+
+	<key>InputMethodServerControllerClass</key>
+	<string>KarukanIMExtension.KarukanInputController</string>
+
+	<!-- App Extension エントリポイント (NSExtensionFoundation ではなく inputmethodkit) -->
+	<key>NSExtension</key>
 	<dict>
-		<key>EXExtensionPointIdentifier</key>
-		<string>com.example.example-extension</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>KarukanIMExtension.KarukanInputController</string>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.inputmethodkit</string>
+	</dict>
+
+	<!-- NSPrincipalClass は NSExtension 内の NSExtensionPrincipalClass と一致させる -->
+	<key>NSPrincipalClass</key>
+	<string>KarukanIMExtension.KarukanInputController</string>
+
+	<!-- 入力モード定義 -->
+	<key>ComponentInputModeDict</key>
+	<dict>
+		<key>tsInputModeListKey</key>
+		<dict>
+			<key>com.example.inputmethod.karukan.hiragana</key>
+			<dict>
+				<key>TISInputSourceIsASCIICapable</key>
+				<false/>
+				<key>TISInputSourceType</key>
+				<string>com.apple.input-method.Roman</string>
+			</dict>
+		</dict>
 	</dict>
 </dict>
 </plist>
