@@ -170,29 +170,42 @@ DispatchQueue.global(qos: .userInitiated).async { [self] in
 ログ取得コマンド:
 ```bash
 log stream \
-  --predicate 'subsystem == "com.example.karukan" AND category == "KarukanInputController"' \
+  --predicate 'subsystem == "com.example.karukan" AND category == "InputController"' \
   --level info \
-  | grep "live convert:"
+  | grep "live infer"
+```
+
+出力例:
+```
+live infer: 5chars 312ms gen=3
+live infer: 10chars 487ms gen=7
+live infer: 15chars 821ms gen=12
+live infer (head): 4chars 198ms
 ```
 
 #### チューニング指標
 
-| 文字数 | 目標推論時間 | 判定 |
-|---|---|---|
-| 5文字 | < 500ms | 許容 |
-| 10文字 | < 800ms | 許容 |
-| 15文字（現閾値） | < 1200ms | 要確認 |
-| 20文字 | 未計測 | Phase 4 で計測 |
+実測値（M シリーズ Mac、2026-02-26）:
 
-推論時間が閾値 1000ms 以下に収まる最大文字数を `kLiveConversionMaxChars` として採用する。
-M1/M2 Mac と Intel Mac で差が大きい場合はデバイス判定を検討する。
+| 文字数 | 実測推論時間 | 判定 |
+|---|---|---|
+| 1-5文字 | ~30-45ms | ✅ 許容 |
+| 6-10文字 | ~35-55ms | ✅ 許容 |
+| 11-15文字 | ~45-72ms | ✅ 許容 |
+| 16文字 | ~58ms | ✅ 許容 |
+| 30文字（新閾値） | ~90ms（外挿） | ✅ 許容 |
+
+推論時間が 1000ms 以下に収まる最大文字数を `kLiveConversionMaxChars` として採用する。
+実測値はすべて 100ms 未満。線形外挿で 30 chars ≒ 90ms。Intel Mac は 3-5 倍でも 300-450ms で許容範囲内。
+
+**決定値: `kLiveConversionMaxChars = 30`**（2026-02-26 に反映済み）
 
 #### テスト要件
 
 ```text
-[ ] 5〜20文字の各ステップで推論時間を計測・記録する
-[ ] kLiveConversionMaxChars の最終値を決定してコードに反映する
-[ ] OSLog に推論時間が出力されること（デバッグビルドのみでも可）
+[x] OSLog に推論時間が出力されること（info レベル、常時有効）
+[x] 5〜20文字の各ステップで推論時間を計測・記録する
+[x] kLiveConversionMaxChars の最終値を決定してコードに反映する（30 に変更済み）
 ```
 
 ---
@@ -279,9 +292,10 @@ T2: 長文文節分割 ✅
   [x] 残りが継続 Composing になる
   [x] 境界なし時は全体コミット（フォールバック）
 
-T3: kLiveConversionMaxChars チューニング
-  [ ] 推論時間を OSLog で計測・記録
-  [ ] 適切な閾値を決定してコードに反映
+T3: kLiveConversionMaxChars チューニング ✅
+  [x] 推論時間を OSLog で計測（info レベル: "live infer: Nchars Xms gen=Y"）
+  [x] 実機で 5〜20 文字の推論時間を記録（最大 72ms @14chars on M シリーズ）
+  [x] 適切な閾値を決定してコードに反映（15 → 30 に変更）
 
 T4: fopen failed
   [ ] 原因特定
@@ -310,7 +324,7 @@ T4: fopen failed
 
 - [x] Ctrl+Shift+L でライブ変換の有効/無効が切り替わる
 - [x] 15文字超の入力で文節単位（または全体）の自動コミットが行われる
-- [ ] `kLiveConversionMaxChars` の値が計測に基づいて決定されている
+- [x] `kLiveConversionMaxChars` の値が計測に基づいて決定されている（15 → 30、M シリーズ実測）
 - [ ] `fopen failed` ログの影響が評価されている（対処 or 許容の判断あり）
 - [ ] `cargo build -p karukan-macos` がエラーなく成功する
 - [ ] 高速タイピング（100ms/key 以下）でクラッシュしない

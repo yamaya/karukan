@@ -46,9 +46,14 @@ final class KarukanInputController: IMKInputController {
     /// 推論が終わっていなければ新規タスクはスキップする（スレッド爆発防止）。
     private let liveConversionSemaphore = DispatchSemaphore(value: 1)
 
-    /// ライブ変換を起動する最大入力長（ひらがな文字数）。
-    /// 長文は推論時間が長すぎてスレッド飽和・ビーチボールの原因になるためスキップする。
-    private static let kLiveConversionMaxChars = 15
+    /// ライブ変換の自動コミット閾値（ひらがな文字数）。
+    /// この文字数を超えた状態で推論が完了したら文節分割コミットを行い、preedit の肥大化を防ぐ。
+    ///
+    /// 実測値（M シリーズ Mac、2026-02-26）:
+    ///   1-5 chars: ~30-45ms  /  6-10: ~35-55ms  /  11-15: ~45-72ms  /  16: 58ms
+    /// 線形外挿: 30 chars ≒ 90ms — 十分許容範囲内。
+    /// Intel Mac では 3-5 倍になる可能性があるため 30 で余裕を持たせている。
+    private static let kLiveConversionMaxChars = 30
 
     /// ライブ変換の有効/無効フラグ。UserDefaults に永続化される。
     /// Ctrl+Shift+L でトグル。デフォルトは有効。
@@ -402,7 +407,11 @@ final class KarukanInputController: IMKInputController {
             defer { liveConversionSemaphore.signal() }
 
             // Arc<KanaKanjiConverter> のみアクセス（Send+Sync）— 全体の変換
+            let t0 = CFAbsoluteTimeGetCurrent()
             let resultPtr = karukan_convert_top1(session, hiragana)
+            let fullMs = Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)
+            logger.info("live infer: \(hiragana.count)chars \(fullMs)ms gen=\(gen)")
+
             guard let resultPtr else {
                 logger.debug("karukan_convert_top1: nil (gen=\(gen))")
                 return
@@ -420,10 +429,13 @@ final class KarukanInputController: IMKInputController {
                 let headHiragana = String(hiragana[..<boundaryIdx])
                 let tail = String(hiragana[boundaryIdx...])
                 // 先頭文節のみを変換（短いので高速）
+                let t1 = CFAbsoluteTimeGetCurrent()
                 if let headPtr = karukan_convert_top1(session, headHiragana) {
+                    let headMs = Int((CFAbsoluteTimeGetCurrent() - t1) * 1000)
                     autoCommitCandidate = String(cString: headPtr)
                     karukan_free_string(headPtr)
                     tailHiragana = tail
+                    logger.info("live infer (head): \(headHiragana.count)chars \(headMs)ms")
                     logger.debug("clause split: head='\(autoCommitCandidate)' tail='\(tailHiragana)'")
                 }
                 // headPtr が nil の場合: autoCommitCandidate = candidate（全体コミット）のまま
