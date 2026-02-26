@@ -50,12 +50,22 @@ final class KarukanInputController: IMKInputController {
     /// 長文は推論時間が長すぎてスレッド飽和・ビーチボールの原因になるためスキップする。
     private static let kLiveConversionMaxChars = 15
 
+    /// ライブ変換の有効/無効フラグ。UserDefaults に永続化される。
+    /// Ctrl+Shift+L でトグル。デフォルトは有効。
+    private var isLiveConversionEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: "karukanLiveConversionEnabled") }
+        set { UserDefaults.standard.set(newValue, forKey: "karukanLiveConversionEnabled") }
+    }
+
     // -----------------------------------------------------------------------
     // MARK: - Lifecycle
     // -----------------------------------------------------------------------
 
     override init!(server: IMKServer!, delegate: Any!, client: Any!) {
         super.init(server: server, delegate: delegate, client: client)
+
+        // UserDefaults のデフォルト値を登録（初回起動時のみ有効）
+        UserDefaults.standard.register(defaults: ["karukanLiveConversionEnabled": true])
 
         // セッション生成（軽量・メインスレッド OK）
         guard let ptr = karukan_session_new() else {
@@ -134,6 +144,19 @@ final class KarukanInputController: IMKInputController {
         guard event.type == .keyDown else { return false }
 
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+
+        // Ctrl+Shift+L: ライブ変換のオン/オフトグル（37 = kVK_ANSI_L）
+        if event.keyCode == 37, flags == [.control, .shift] {
+            isLiveConversionEnabled.toggle()
+            logger.info("live conversion toggled: \(self.isLiveConversionEnabled ? "enabled" : "disabled")")
+            if !isLiveConversionEnabled {
+                // 無効化時: 表示中の live_candidate をクリアしてひらがな表示に戻す
+                _ = karukan_push_key(session, KarukanMacOSKey.escape.rawValue)
+                updateClientState(client: sender)
+            }
+            return true
+        }
+
         if flags.contains(.command) || flags.contains(.option) || flags.contains(.control) {
             return false
         }
@@ -159,7 +182,7 @@ final class KarukanInputController: IMKInputController {
         updateClientState(client: sender)
         updateCandidatesPanel(sender: sender)
         // 文字入力後にライブ変換をトリガー（Composing 状態でなければ内部で無視される）
-        if consumed {
+        if consumed && isLiveConversionEnabled {
             triggerLiveConversion(sender: sender)
         }
         return consumed
