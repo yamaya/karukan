@@ -394,8 +394,9 @@ impl KarukanSession {
     pub fn push_char(&mut self, ch: char) -> bool {
         self.clear_flags();
         // 新しい文字が入力されたので前回のライブ変換結果を無効化する。
-        // 次の triggerLiveConversion が完了したら apply_live_candidate で再セットされる。
-        self.live_candidate = None;
+        // take() で取り出し、バックグラウンド推論が完了するまでの
+        // 一時的な表示ベースとして使う（フリッカー防止）。
+        let prev_live = self.live_candidate.take();
 
         // In Conversion state, any printable char cancels conversion and
         // re-enters Composing (commit the char as new input).
@@ -420,16 +421,29 @@ impl KarukanSession {
             self.input_buf.insert(&new_hiragana);
         }
 
-        // Build preedit = confirmed hiragana + pending romaji buffer.
+        // Build preedit:
+        // prev_live がある場合（例: "日本"）はそれをベースにして "日本g" を表示する。
+        // バックグラウンド推論が完了するまでひらがな ("にほんg") を見せないことで
+        // フリッカーを防ぐ。推論完了後は apply_live_candidate が上書きする。
+        // prev_live がなければ従来通り input_buf ひらがな + ローマ字バッファ。
         let romaji_buf = self.romaji.buffer().to_string();
-        let preedit_text = format!("{}{}", self.input_buf.text, romaji_buf);
+        let display_base = prev_live.as_deref().unwrap_or(&self.input_buf.text);
+        let preedit_text = format!("{}{}", display_base, romaji_buf);
 
         if preedit_text.is_empty() {
             self.state = SessionState::Empty;
             self.update_preedit("");
         } else {
             self.state = SessionState::Composing;
-            self.update_preedit(&preedit_text);
+            if prev_live.is_some() {
+                // ライブ変換結果ベースの preedit を直接セット。
+                // update_preedit() は input_buf ベースのカーソルを使うため使えない。
+                self.preedit.text = CString::new(preedit_text.as_str()).unwrap_or_default();
+                self.preedit.caret_bytes = preedit_text.len() as u32;
+                self.preedit.dirty = true;
+            } else {
+                self.update_preedit(&preedit_text);
+            }
         }
 
         true // always consumed
@@ -548,7 +562,11 @@ impl KarukanSession {
             std::mem::take(&mut self.input_buf.text)
         };
 
-        self.input_buf.cursor_chars = 0;
+        // live/non-live どちらの経路でも input_buf を完全にクリアする。
+        // non-live は std::mem::take で text は既に空だが cursor_chars のリセットを兼ねる。
+        // live は take() せず text が残ったままなので clear() が必須（次のキー入力で
+        // 古いひらがなが preedit に混入するバグを防ぐ）。
+        self.input_buf.clear();
         self.romaji.reset();
         self.state = SessionState::Empty;
 
