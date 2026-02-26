@@ -355,46 +355,68 @@ int karukan_apply_live_candidate(
 
 ### 10. generation counter とライブ変換トリガー
 
+プロパティとして以下を追加する。
+
 ```swift
 /// ライブ変換の世代カウンタ。
 /// push_char のたびにインクリメントし、stale な推論結果を廃棄するために使う。
-/// karukan-im にはデバウンスがないため、ここでも設けない。
 private var liveConversionGeneration: Int = 0
 
-/// バックグラウンドで推論を起動し、結果をメインスレッドで適用する。
-///
-/// - session からひらがなを読み取り（メインスレッド）
-/// - Arc<KanaKanjiConverter> のみ使って変換（バックグラウンド）
-/// - generation が一致すれば apply（メインスレッド）
+/// 同時推論を 1 件に制限するセマフォ。
+/// 前の推論が終わっていなければ新規タスクをスキップする（スレッド爆発防止）。
+private let liveConversionSemaphore = DispatchSemaphore(value: 1)
+
+/// ライブ変換を起動する最大ひらがな文字数。
+/// 超えた直後の変換完了時に自動コミットし、新規 Composing に移行する。
+private static let kLiveConversionMaxChars = 15
+```
+
+`triggerLiveConversion` の実装。2つのガードを追加している。
+
+```swift
 private func triggerLiveConversion(sender: Any?) {
     guard let session else { return }
 
-    // メインスレッドでひらがなを取得
-    var buf = [CChar](repeating: 0, count: 256)
+    var buf = [CChar](repeating: 0, count: 512)
     let len = karukan_get_composing_hiragana(session, &buf, buf.count)
     guard len > 0 else { return }
     let hiragana = String(cString: buf)
 
-    // 世代をインクリメント
     liveConversionGeneration &+= 1
     let gen = liveConversionGeneration
 
-    DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-        guard let self else { return }
+    // [self] strong capture: deinit はメインスレッドで動くため、
+    // このクロージャが完了するまで karukan_session_free は呼ばれない。
+    DispatchQueue.global(qos: .userInitiated).async { [self] in
 
-        // Arc<KanaKanjiConverter> のみ触るのでスレッドセーフ
+        // ── ガード 1: 同時推論を 1 件に制限 ──────────────────────────────
+        // 前の推論が走っていれば今回はスキップ（非ブロッキング tryWait）。
+        // これにより長文タイピング時のスレッド飽和・ビーチボールを防ぐ。
+        guard liveConversionSemaphore.wait(timeout: .now()) == .success else {
+            return
+        }
+        defer { liveConversionSemaphore.signal() }
+
         let resultPtr = karukan_convert_top1(session, hiragana)
         guard let resultPtr else { return }
-        defer { karukan_free_string(resultPtr) }
         let candidate = String(cString: resultPtr)
+        karukan_free_string(resultPtr)
 
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            // stale な結果を廃棄
+            // ── ガード 2: stale な結果を廃棄 ───────────────────────────────
             guard self.liveConversionGeneration == gen else { return }
 
             if karukan_apply_live_candidate(session, candidate) != 0 {
-                self.flushPreedit(sender: sender ?? self.client())
+                // ── 長文自動コミット ────────────────────────────────────────
+                // 入力が上限を超えていたら変換結果をそのままコミットして新規 Composing へ。
+                // handle() 側でなくここでコミットする理由:
+                //   apply_live_candidate 後は live_candidate が Some(漢字) になっているため、
+                //   do_commit が漢字をコミットできる（ひらがなコミットにならない）。
+                if hiragana.count > Self.kLiveConversionMaxChars {
+                    _ = karukan_push_key(session, KarukanMacOSKey.returnKey.rawValue)
+                }
+                self.updateClientState(client: sender ?? self.client())
             }
         }
     }
@@ -482,7 +504,12 @@ if karukan_is_empty(session) != 0 {
 
 ```text
 [x] 高速タイピング中にクラッシュしない
-[ ] stale な推論結果が混入しない（世代カウンタで弾かれる）
+[x] stale な推論結果が混入しない（世代カウンタで弾かれる）
+     確認: log stream | grep "stale discarded" で廃棄ログが出ることを観察
+[x] 同時推論が 1 件に制限される（DispatchSemaphore）
+     確認: log stream | grep "inference busy" でスキップログが出ることを観察
+[x] 長文入力（>15文字）で自動コミットされ、ビーチボールが起きない
+     確認: log stream | grep "auto-commit" で自動コミットログが出ることを観察
 [ ] モデルロード前（converter = None）でもクラッシュしない
 ```
 
@@ -493,7 +520,7 @@ if karukan_is_empty(session) != 0 {
 | # | リスク | 対処 |
 |---|---|---|
 | R1 | バックグラウンド中に session が解放される | `weak self` + `guard session` で防ぐ |
-| R2 | 推論が重く毎キー起動するとスレッド飽和 | `DispatchQueue.global` は最大 64 スレッドまでキューイングするため通常問題ない。重い場合はシリアルキューに変更 |
+| R2 | 推論が重く毎キー起動するとスレッド飽和・ビーチボール | **対処済み**: セマフォ（同時1件）+ 長文自動コミット（`kLiveConversionMaxChars = 15`）で解決 |
 | R3 | `karukan_convert_top1` が session の他フィールドに触れるバグ | コードレビューで `converter` フィールドのみアクセスすることを確認 |
 | R4 | ライブ変換結果がひらがなと同じ（モデル未ロード時など）| `apply_live_candidate` を適用するが視覚変化なし。許容範囲 |
 
@@ -515,4 +542,4 @@ if karukan_is_empty(session) != 0 {
 
 1. ライブ変換の **有効/無効トグル**（Ctrl+Shift+L 相当）— Phase 4 で設定 UI を追加する際に実装。
 2. ライブ変換で文節分割が必要なケース（長い文）— 現在は全体を1候補として扱う。将来的には karukan-im の `ParallelBeam` 戦略を参考に複数候補を活用する。
-3. **パフォーマンス計測** — `karukan_convert_top1` の実行時間を計測し、100ms を超える場合はシリアルキューまたはキャンセル機構の導入を検討する。
+3. **パフォーマンス計測** — `karukan_convert_top1` の実行時間を計測し、`kLiveConversionMaxChars`（現在 15）の適切な値を調整する。さらに短縮が必要な場合はキャンセル機構（`Task` + cooperative cancellation）の導入を検討。
