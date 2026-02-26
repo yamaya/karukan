@@ -269,6 +269,19 @@ int karukan_apply_live_candidate(
     KarukanSession* session,
     const char* candidate_utf8);
 
+/**
+ * 長文コミット後の残余ひらがなを Composing 状態として注入する。
+ *
+ * karukan_push_key(KARUKAN_KEY_RETURN) の直後に呼び、文節分割で切り取った
+ * 後半のひらがなを次の Composing 入力として引き継ぐ。
+ * メインスレッドからのみ呼ぶこと。
+ *
+ * 戻り値: 1=成功, 0=hiragana_utf8 が NULL または空文字列
+ */
+int karukan_set_composing_hiragana(
+    KarukanSession* session,
+    const char* hiragana_utf8);
+
 #ifdef __cplusplus
 }
 #endif

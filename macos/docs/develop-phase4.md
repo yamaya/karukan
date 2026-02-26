@@ -82,10 +82,10 @@ if event.modifiers.contains([.control, .shift]),
 #### テスト要件
 
 ```text
-[ ] Ctrl+Shift+L でライブ変換が off になり、ひらがなのみ preedit に表示される
-[ ] 再度 Ctrl+Shift+L で on に戻り、ライブ変換が再開する
-[ ] off 状態で Space → 候補ウィンドウが表示される（通常の変換は動く）
-[ ] IME プロセス再起動後も on/off 状態が保持される
+[x] Ctrl+Shift+L でライブ変換が off になり、ひらがなのみ preedit に表示される
+[x] 再度 Ctrl+Shift+L で on に戻り、ライブ変換が再開する
+[x] off 状態で Space → 候補ウィンドウが表示される（通常の変換は動く）
+[x] IME プロセス再起動後も on/off 状態が保持される
 ```
 
 ---
@@ -133,9 +133,9 @@ if hiragana.count > Self.kLiveConversionMaxChars {
 #### テスト要件
 
 ```text
-[ ] 「わたしはがっこうへいきます」で「私は」のような文節単位でコミットされる
-[ ] コミット後、残りの読みが新しい preedit として継続される
-[ ] 境界が見つからない場合（純粋な名詞列など）は全体コミット
+[x] 「わたしはがっこうへいきます」で「私は」のような文節単位でコミットされる
+[x] コミット後、残りの読みが新しい preedit として継続される
+[x] 境界が見つからない場合（純粋な名詞列など）は全体コミット
 ```
 
 ---
@@ -269,15 +269,15 @@ Phase 4 では `UserDefaults` で十分だが、Phase 5（配布）に向けて�
 ## テスト要件まとめ
 
 ```text
-T1: ライブ変換トグル
-  [ ] Ctrl+Shift+L で on/off 切り替え
-  [ ] off 時は通常の Space 変換が動く
-  [ ] 状態が UserDefaults に永続化される
+T1: ライブ変換トグル ✅
+  [x] Ctrl+Shift+L で on/off 切り替え
+  [x] off 時は通常の Space 変換が動く
+  [x] 状態が UserDefaults に永続化される
 
-T2: 長文文節分割
-  [ ] 15文字超で文節単位コミット
-  [ ] 残りが継続 Composing になる
-  [ ] 境界なし時は全体コミット（フォールバック）
+T2: 長文文節分割 ✅
+  [x] 15文字超で文節単位コミット
+  [x] 残りが継続 Composing になる
+  [x] 境界なし時は全体コミット（フォールバック）
 
 T3: kLiveConversionMaxChars チューニング
   [ ] 推論時間を OSLog で計測・記録
@@ -308,8 +308,8 @@ T4: fopen failed
 
 ## 完了条件（Acceptance Criteria）
 
-- [ ] Ctrl+Shift+L でライブ変換の有効/無効が切り替わる
-- [ ] 15文字超の入力で文節単位（または全体）の自動コミットが行われる
+- [x] Ctrl+Shift+L でライブ変換の有効/無効が切り替わる
+- [x] 15文字超の入力で文節単位（または全体）の自動コミットが行われる
 - [ ] `kLiveConversionMaxChars` の値が計測に基づいて決定されている
 - [ ] `fopen failed` ログの影響が評価されている（対処 or 許容の判断あり）
 - [ ] `cargo build -p karukan-macos` がエラーなく成功する

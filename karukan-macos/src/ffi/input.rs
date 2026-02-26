@@ -85,6 +85,33 @@ pub extern "C" fn karukan_select_candidate(
     .unwrap_or(0)
 }
 
+/// 長文コミット後の残余ひらがなを Composing 状態として注入する。
+///
+/// `karukan_push_key(KARUKAN_KEY_RETURN)` でコミットした直後に呼び、
+/// 文節分割で切り取った後半のひらがなを次の Composing 入力として引き継ぐ。
+/// メインスレッドからのみ呼ぶこと。
+///
+/// 戻り値: 1=成功, 0=hiragana_utf8 が NULL または空文字列
+#[unsafe(no_mangle)]
+pub extern "C" fn karukan_set_composing_hiragana(
+    session: *mut KarukanSession,
+    hiragana_utf8: *const c_char,
+) -> c_int {
+    std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let s = ffi_mut!(session, 0);
+        if hiragana_utf8.is_null() {
+            return 0;
+        }
+        let hiragana = match unsafe { std::ffi::CStr::from_ptr(hiragana_utf8) }.to_str() {
+            Ok(h) => h,
+            Err(_) => return 0,
+        };
+        s.set_composing_hiragana(hiragana);
+        1
+    }))
+    .unwrap_or(0)
+}
+
 /// バックグラウンド推論の結果を session に適用する。
 ///
 /// Composing 状態でなければ無視する（stale な結果が Conversion 中に届いた場合など）。

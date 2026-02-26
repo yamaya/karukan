@@ -370,6 +370,8 @@ final class KarukanInputController: IMKInputController {
     /// - メインスレッドで現在のひらがなを取得（karukan_get_composing_hiragana）
     /// - バックグラウンドで Arc<KanaKanjiConverter> のみ使って変換（karukan_convert_top1）
     /// - generation が一致するときのみ結果を適用（stale な結果を廃棄）
+    /// - 長文（> kLiveConversionMaxChars）の場合は文節境界で分割し先頭文節のみコミット、
+    ///   残余ひらがなを karukan_set_composing_hiragana で次の Composing へ引き継ぐ
     ///
     /// karukan-im との対比: Linux 版は同期実行だが macOS はメインスレッドをブロックできないため非同期にする。
     private func triggerLiveConversion(sender: Any?) {
@@ -399,7 +401,7 @@ final class KarukanInputController: IMKInputController {
             }
             defer { liveConversionSemaphore.signal() }
 
-            // Arc<KanaKanjiConverter> のみアクセス（Send+Sync）
+            // Arc<KanaKanjiConverter> のみアクセス（Send+Sync）— 全体の変換
             let resultPtr = karukan_convert_top1(session, hiragana)
             guard let resultPtr else {
                 logger.debug("karukan_convert_top1: nil (gen=\(gen))")
@@ -408,6 +410,25 @@ final class KarukanInputController: IMKInputController {
             let candidate = String(cString: resultPtr)
             karukan_free_string(resultPtr)
 
+            // ── 長文の場合: 文節境界で分割して先頭文節のみコミット ───────────────
+            // autoCommitCandidate: メインスレッドで apply する変換テキスト
+            // tailHiragana: コミット後に次の Composing として注入する残余ひらがな
+            var autoCommitCandidate = candidate
+            var tailHiragana = ""
+            if hiragana.count > Self.kLiveConversionMaxChars,
+               let boundaryIdx = Self.findClauseBoundary(in: hiragana) {
+                let headHiragana = String(hiragana[..<boundaryIdx])
+                let tail = String(hiragana[boundaryIdx...])
+                // 先頭文節のみを変換（短いので高速）
+                if let headPtr = karukan_convert_top1(session, headHiragana) {
+                    autoCommitCandidate = String(cString: headPtr)
+                    karukan_free_string(headPtr)
+                    tailHiragana = tail
+                    logger.debug("clause split: head='\(autoCommitCandidate)' tail='\(tailHiragana)'")
+                }
+                // headPtr が nil の場合: autoCommitCandidate = candidate（全体コミット）のまま
+            }
+
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 // stale な結果は廃棄
@@ -415,19 +436,56 @@ final class KarukanInputController: IMKInputController {
                     logger.debug("live conversion discarded (stale gen=\(gen))")
                     return
                 }
-                logger.debug("apply_live_candidate: '\(candidate)' gen=\(gen)")
-                if karukan_apply_live_candidate(session, candidate) != 0 {
-                    // 入力が上限を超えていたら変換結果を直接コミットして新規 Composing へ移行する。
-                    // handle() 側ではなくここでコミットすることで、live_candidate（漢字）が
-                    // 確実にセットされた状態でコミットできる（ひらがなコミットを避ける）。
+                logger.debug("apply_live_candidate: '\(autoCommitCandidate)' gen=\(gen)")
+                if karukan_apply_live_candidate(session, autoCommitCandidate) != 0 {
                     if hiragana.count > Self.kLiveConversionMaxChars {
-                        logger.debug("auto-commit: post-conversion (\(hiragana.count) chars)")
+                        // 変換済みテキストをコミット（live_candidate が Some(漢字) の状態で Return）
                         _ = karukan_push_key(session, KarukanMacOSKey.returnKey.rawValue)
+                        if !tailHiragana.isEmpty {
+                            // 残余ひらがなを新規 Composing として注入し、ライブ変換を再トリガー
+                            _ = karukan_set_composing_hiragana(session, tailHiragana)
+                            self.updateClientState(client: sender ?? self.client())
+                            self.triggerLiveConversion(sender: sender)
+                            return
+                        }
                     }
                     self.updateClientState(client: sender ?? self.client())
                 }
             }
         }
+    }
+
+    /// ひらがな文字列の最初の文節境界（助詞直後の位置）を返す。
+    ///
+    /// 先頭 minHead 文字は必ず先頭文節に含め、それ以降で最初に現れる
+    /// 助詞（1文字または2文字）の直後を境界とする。
+    /// 境界が見つからなければ nil を返す。
+    ///
+    /// 例: "わたしはがっこうへいきます" → "は" の直後（インデックス 4 文字目）
+    private static func findClauseBoundary(in hiragana: String) -> String.Index? {
+        let oneChar: Set<Character> = ["は", "が", "を", "に", "で", "へ", "と", "も"]
+        let twoChar: Set<String>    = ["から", "まで", "より", "って", "けど", "ので",
+                                       "のに", "には", "では", "とは"]
+        let chars = Array(hiragana)
+        let n = chars.count
+        let minHead = 3  // 最低3文字は head に含める（短すぎる分割防止）
+
+        var i = minHead
+        while i < n {
+            // 2文字助詞を優先チェック（"には" を "に" より先にマッチさせる）
+            if i + 1 < n {
+                let two = String([chars[i], chars[i + 1]])
+                if twoChar.contains(two) {
+                    return hiragana.index(hiragana.startIndex, offsetBy: i + 2)
+                }
+            }
+            // 1文字助詞
+            if oneChar.contains(chars[i]) {
+                return hiragana.index(hiragana.startIndex, offsetBy: i + 1)
+            }
+            i += 1
+        }
+        return nil
     }
 
     private func forceCommit(client: Any?) {

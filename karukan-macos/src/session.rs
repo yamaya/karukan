@@ -367,10 +367,15 @@ impl KarukanSession {
     ///
     /// live_candidate をセットして preedit を変換済みテキストに更新する。
     /// Composing 状態でなければ無視する（stale な結果が Conversion 中に届いた場合など）。
+    ///
+    /// 新しいライブ変換サイクルの開始を意味するため、clear_flags() で前サイクルの
+    /// dirty フラグ（特に commit.dirty）をクリアする。これにより、文節分割コミット後の
+    /// 残余ひらがなの推論完了時に前のコミットテキストが重複送信されるバグを防ぐ。
     pub fn apply_live_candidate(&mut self, candidate: &str) {
         if !matches!(self.state, SessionState::Composing) {
             return;
         }
+        self.clear_flags();
         self.live_candidate = Some(candidate.to_string());
         // preedit = 変換済みテキスト + 未確定ローマ字バッファ
         // 例: candidate="日本語", romaji.buffer()="h" → preedit="日本語h"
@@ -380,6 +385,31 @@ impl KarukanSession {
         self.preedit.text = CString::new(preedit_text.as_str()).unwrap_or_default();
         // キャレットは preedit 末尾（ローマ字バッファの後ろ）
         self.preedit.caret_bytes = preedit_text.len() as u32;
+        self.preedit.dirty = true;
+    }
+
+    /// 長文コミット後の残余ひらがなを Composing 状態として注入する。
+    ///
+    /// `push_key(Return)` でのコミット完了直後にメインスレッドから呼び、
+    /// 文節分割の後半を次の Composing 入力として引き継ぐ。
+    ///
+    /// - romaji バッファをリセット（前の入力残留を防ぐ）
+    /// - `input_buf` にひらがなをセット
+    /// - `live_candidate` をクリア
+    /// - `SessionState::Composing` へ遷移
+    /// - preedit をひらがな表示に更新
+    pub fn set_composing_hiragana(&mut self, hiragana: &str) {
+        if hiragana.is_empty() {
+            return;
+        }
+        self.romaji.reset();
+        self.input_buf.clear();
+        self.input_buf.insert(hiragana);
+        self.live_candidate = None;
+        self.state = SessionState::Composing;
+        // preedit をひらがなで更新（カーソルは末尾）
+        self.preedit.text = CString::new(hiragana).unwrap_or_default();
+        self.preedit.caret_bytes = hiragana.len() as u32;
         self.preedit.dirty = true;
     }
 
