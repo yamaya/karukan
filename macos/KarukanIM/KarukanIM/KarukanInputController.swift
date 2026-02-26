@@ -42,6 +42,14 @@ final class KarukanInputController: IMKInputController {
     /// karukan-im ではデバウンスなしで同期実行するため、ここでもデバウンスは設けない。
     private var liveConversionGeneration: Int = 0
 
+    /// 同時推論を 1 件に制限するセマフォ。
+    /// 推論が終わっていなければ新規タスクはスキップする（スレッド爆発防止）。
+    private let liveConversionSemaphore = DispatchSemaphore(value: 1)
+
+    /// ライブ変換を起動する最大入力長（ひらがな文字数）。
+    /// 長文は推論時間が長すぎてスレッド飽和・ビーチボールの原因になるためスキップする。
+    private static let kLiveConversionMaxChars = 15
+
     // -----------------------------------------------------------------------
     // MARK: - Lifecycle
     // -----------------------------------------------------------------------
@@ -360,6 +368,14 @@ final class KarukanInputController: IMKInputController {
         // deinit は DispatchQueue.main で動くため、このクロージャが完了するまで
         // karukan_session_free は呼ばれない。
         DispatchQueue.global(qos: .userInitiated).async { [self] in
+            // 前の推論がまだ走っていれば今回はスキップ（同時推論を 1 件に制限）。
+            // timeout: .now() = 非ブロッキング tryWait。取れなければ即 return。
+            guard liveConversionSemaphore.wait(timeout: .now()) == .success else {
+                logger.debug("live: skipped (inference busy) gen=\(gen)")
+                return
+            }
+            defer { liveConversionSemaphore.signal() }
+
             // Arc<KanaKanjiConverter> のみアクセス（Send+Sync）
             let resultPtr = karukan_convert_top1(session, hiragana)
             guard let resultPtr else {
@@ -378,6 +394,13 @@ final class KarukanInputController: IMKInputController {
                 }
                 logger.debug("apply_live_candidate: '\(candidate)' gen=\(gen)")
                 if karukan_apply_live_candidate(session, candidate) != 0 {
+                    // 入力が上限を超えていたら変換結果を直接コミットして新規 Composing へ移行する。
+                    // handle() 側ではなくここでコミットすることで、live_candidate（漢字）が
+                    // 確実にセットされた状態でコミットできる（ひらがなコミットを避ける）。
+                    if hiragana.count > Self.kLiveConversionMaxChars {
+                        logger.debug("auto-commit: post-conversion (\(hiragana.count) chars)")
+                        _ = karukan_push_key(session, KarukanMacOSKey.returnKey.rawValue)
+                    }
                     self.updateClientState(client: sender ?? self.client())
                 }
             }
