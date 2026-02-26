@@ -54,10 +54,6 @@ impl InputBuffer {
         }
     }
 
-    fn is_empty(&self) -> bool {
-        self.text.is_empty()
-    }
-
     fn clear(&mut self) {
         self.text.clear();
         self.cursor_chars = 0;
