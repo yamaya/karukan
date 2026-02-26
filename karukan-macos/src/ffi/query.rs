@@ -7,6 +7,7 @@
 
 use std::ffi::{c_char, c_int};
 use std::panic::AssertUnwindSafe;
+use std::sync::Arc;
 
 use super::{KarukanSession, ffi_mut, ffi_ref};
 
@@ -142,6 +143,92 @@ pub extern "C" fn karukan_get_candidate(
 #[unsafe(no_mangle)]
 pub extern "C" fn karukan_get_candidate_cursor(session: *const KarukanSession) -> u32 {
     std::panic::catch_unwind(|| ffi_ref!(session, 0).candidate_cache.cursor).unwrap_or(0)
+}
+
+// ---------------------------------------------------------------------------
+// Live conversion
+// ---------------------------------------------------------------------------
+
+/// Composing 状態のひらがなを `buf` にコピーする。
+///
+/// バックグラウンドスレッドで推論を起動する直前に、メインスレッドから呼ぶこと。
+/// Composing 状態でなければ 0 を返す（コピーなし）。
+///
+/// 戻り値: コピーした文字数（null 終端を除くバイト数）。null ポインタ時は 0。
+#[unsafe(no_mangle)]
+pub extern "C" fn karukan_get_composing_hiragana(
+    session: *const KarukanSession,
+    buf: *mut c_char,
+    buf_len: usize,
+) -> c_int {
+    std::panic::catch_unwind(|| {
+        let s = ffi_ref!(session, 0);
+        let Some(text) = s.composing_hiragana() else {
+            return 0;
+        };
+        let bytes = text.as_bytes();
+        let copy_len = bytes.len().min(buf_len.saturating_sub(1));
+        if copy_len == 0 || buf.is_null() {
+            return 0;
+        }
+        // SAFETY: buf is non-null (checked above), buf_len >= copy_len + 1.
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf as *mut u8, copy_len);
+            *buf.add(copy_len) = 0;
+        }
+        copy_len as c_int
+    })
+    .unwrap_or(0)
+}
+
+/// ひらがなを変換して上位1候補をヒープ確保した文字列で返す。
+///
+/// `Arc<KanaKanjiConverter>` のみ使用するためバックグラウンドスレッドから呼べる。
+/// 戻り値は `karukan_free_string` で解放すること。
+/// モデル未ロード時やエラー時は null を返す。
+///
+/// # Safety
+/// session の `converter` フィールド（Arc）は Send+Sync であり読み取り専用アクセスのみ行う。
+/// 呼び出し中に session が解放・変更されないことを呼び出し側が保証すること。
+#[unsafe(no_mangle)]
+pub extern "C" fn karukan_convert_top1(
+    session: *const KarukanSession,
+    hiragana_utf8: *const c_char,
+) -> *mut c_char {
+    std::panic::catch_unwind(|| {
+        let s = ffi_ref!(session, std::ptr::null_mut());
+        let Some(conv) = s.converter.as_ref() else {
+            return std::ptr::null_mut();
+        };
+        let conv = Arc::clone(conv);
+        if hiragana_utf8.is_null() {
+            return std::ptr::null_mut();
+        }
+        let hiragana = match unsafe { std::ffi::CStr::from_ptr(hiragana_utf8) }.to_str() {
+            Ok(s) => s,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        match conv.convert(hiragana, "", 1) {
+            Ok(candidates) if !candidates.is_empty() => {
+                std::ffi::CString::new(candidates[0].as_str())
+                    .map(|cs| cs.into_raw())
+                    .unwrap_or(std::ptr::null_mut())
+            }
+            _ => std::ptr::null_mut(),
+        }
+    })
+    .unwrap_or(std::ptr::null_mut())
+}
+
+/// `karukan_convert_top1` が返したポインタを解放する。
+///
+/// null ポインタを渡すと no-op。
+#[unsafe(no_mangle)]
+pub extern "C" fn karukan_free_string(ptr: *mut c_char) {
+    if !ptr.is_null() {
+        // SAFETY: ptr は karukan_convert_top1 が CString::into_raw() で生成したもの。
+        unsafe { drop(std::ffi::CString::from_raw(ptr)) };
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -213,7 +213,14 @@ pub struct KarukanSession {
     /// Optional learning cache (loaded by `init_resources`).
     learning: Option<LearningCache>,
     /// Shared kanji converter (loaded once per process, reused by all sessions).
-    converter: Option<Arc<KanaKanjiConverter>>,
+    /// `pub(crate)` to allow `karukan_convert_top1` in ffi/query.rs to clone the Arc.
+    pub(crate) converter: Option<Arc<KanaKanjiConverter>>,
+    /// Live conversion result (karukan-im の `live.text` に相当).
+    ///
+    /// Some(_) のとき preedit に変換済みテキストを表示し、Enter で確定する。
+    /// push_char のたびに None にリセットされ、バックグラウンド推論完了後に
+    /// apply_live_candidate() で再セットされる。
+    live_candidate: Option<String>,
     /// Preedit state exposed to FFI.
     pub(crate) preedit: PreeditCache,
     /// Commit state exposed to FFI.
@@ -236,6 +243,7 @@ impl KarukanSession {
             dict: None,
             learning: None,
             converter: None,
+            live_candidate: None,
             preedit: PreeditCache::default(),
             commit: CommitCache::default(),
             candidate_cache: CandidateCache::default(),
@@ -344,6 +352,37 @@ impl KarukanSession {
         matches!(self.state, SessionState::Empty)
     }
 
+    /// Composing 状態のひらがなを返す。Composing でなければ `None`。
+    ///
+    /// バックグラウンドスレッドが推論を起動する前に、メインスレッドで取得するために使う。
+    pub fn composing_hiragana(&self) -> Option<&str> {
+        if matches!(self.state, SessionState::Composing) && !self.input_buf.text.is_empty() {
+            Some(&self.input_buf.text)
+        } else {
+            None
+        }
+    }
+
+    /// バックグラウンド推論の結果を適用する（メインスレッドからのみ呼ぶこと）。
+    ///
+    /// live_candidate をセットして preedit を変換済みテキストに更新する。
+    /// Composing 状態でなければ無視する（stale な結果が Conversion 中に届いた場合など）。
+    pub fn apply_live_candidate(&mut self, candidate: &str) {
+        if !matches!(self.state, SessionState::Composing) {
+            return;
+        }
+        self.live_candidate = Some(candidate.to_string());
+        // preedit = 変換済みテキスト + 未確定ローマ字バッファ
+        // 例: candidate="日本語", romaji.buffer()="h" → preedit="日本語h"
+        // karukan-im の set_composing_state() が live.text + romaji buffer を合成するのと同じ。
+        let romaji_buf = self.romaji.buffer().to_string();
+        let preedit_text = format!("{}{}", candidate, romaji_buf);
+        self.preedit.text = CString::new(preedit_text.as_str()).unwrap_or_default();
+        // キャレットは preedit 末尾（ローマ字バッファの後ろ）
+        self.preedit.caret_bytes = preedit_text.len() as u32;
+        self.preedit.dirty = true;
+    }
+
     // -----------------------------------------------------------------------
     // Input handling
     // -----------------------------------------------------------------------
@@ -354,6 +393,9 @@ impl KarukanSession {
     /// printable input while composing or when starting composition).
     pub fn push_char(&mut self, ch: char) -> bool {
         self.clear_flags();
+        // 新しい文字が入力されたので前回のライブ変換結果を無効化する。
+        // 次の triggerLiveConversion が完了したら apply_live_candidate で再セットされる。
+        self.live_candidate = None;
 
         // In Conversion state, any printable char cancels conversion and
         // re-enters Composing (commit the char as new input).
@@ -483,7 +525,10 @@ impl KarukanSession {
     // Private helpers — Composing
     // -----------------------------------------------------------------------
 
-    /// Flush remaining romaji, commit the hiragana, and reset.
+    /// Flush remaining romaji, commit the hiragana (or live conversion result), and reset.
+    ///
+    /// ライブ変換中（live_candidate が Some）の場合は変換済みテキストをコミットし、
+    /// 学習キャッシュに記録する（karukan-im の commit_composing と同じ動作）。
     fn do_commit(&mut self) {
         let prev_len = self.romaji.output().chars().count();
         let _ = self.romaji.flush();
@@ -492,7 +537,17 @@ impl KarukanSession {
             self.input_buf.insert(&flushed);
         }
 
-        let committed = std::mem::take(&mut self.input_buf.text);
+        let committed = if let Some(live) = self.live_candidate.take() {
+            // ライブ変換結果をコミット（karukan-im: commit_composing の live.text 分岐）
+            let hiragana = self.input_buf.text.clone();
+            if let Some(cache) = &mut self.learning {
+                cache.record(&hiragana, &live);
+            }
+            live
+        } else {
+            std::mem::take(&mut self.input_buf.text)
+        };
+
         self.input_buf.cursor_chars = 0;
         self.romaji.reset();
         self.state = SessionState::Empty;
@@ -503,7 +558,18 @@ impl KarukanSession {
     }
 
     /// Discard all pending input without committing.
+    ///
+    /// ライブ変換中（live_candidate が Some）の場合は 2段階動作:
+    ///   1回目 Escape: live_candidate をクリアしてひらがな表示に戻る（karukan-im と同じ）
+    ///   2回目 Escape: 全キャンセル
     fn do_cancel(&mut self) {
+        if self.live_candidate.take().is_some() {
+            // 1回目: ひらがな表示に戻るだけ（入力はキャンセルしない）
+            let preedit_text = format!("{}{}", self.input_buf.text, self.romaji.buffer());
+            self.update_preedit(&preedit_text);
+            return;
+        }
+        // 2回目（または live 変換なし）: 全キャンセル
         self.romaji.reset();
         self.input_buf.clear();
         self.state = SessionState::Empty;
@@ -544,6 +610,9 @@ impl KarukanSession {
     // -----------------------------------------------------------------------
 
     /// Trigger kanji conversion from the current hiragana input.
+    ///
+    /// ライブ変換結果（live_candidate）があれば候補リストの先頭に保存する
+    /// （karukan-im の start_conversion における prev_suggest_text と同じ処理）。
     fn do_conversion(&mut self) {
         // Flush pending romaji (e.g. lone "k" → "k" pass-through).
         let prev_len = self.romaji.output().chars().count();
@@ -558,6 +627,7 @@ impl KarukanSession {
         // If buffer is empty, insert a full-width space and stay in Empty.
         if hiragana.is_empty() {
             self.romaji.reset();
+            self.live_candidate = None;
             self.commit.text = CString::new("\u{3000}").unwrap_or_default();
             self.commit.dirty = true;
             self.state = SessionState::Empty;
@@ -565,7 +635,19 @@ impl KarukanSession {
             return;
         }
 
-        let candidates = self.collect_candidates(&hiragana);
+        // ライブ変換結果を取り出す（Space → Conversion 移行前にクリア）
+        let prev_live = self.live_candidate.take();
+
+        let mut candidates = self.collect_candidates(&hiragana);
+
+        // ライブ変換結果が候補リストにない場合のみ先頭に挿入する。
+        // 推論戦略が変わっても表示していた候補が消えないようにする
+        // （karukan-im: start_conversion の prev_suggest_text 処理）。
+        if let Some(live) = prev_live {
+            if live != hiragana && !candidates.contains(&live) {
+                candidates.insert(0, live);
+            }
+        }
 
         // Populate candidate cache for FFI.
         self.candidate_cache.items = candidates
@@ -635,6 +717,7 @@ impl KarukanSession {
         };
         self.candidate_cache.items.clear();
         self.candidate_cache.cursor = 0;
+        self.live_candidate = None;
         self.state = SessionState::Composing;
         // Restore input_buf to the hiragana we were converting from.
         self.input_buf.clear();

@@ -37,6 +37,11 @@ final class KarukanInputController: IMKInputController {
     /// handle(_:client:) / activateServer(_:) で更新して保持する。
     private var currentSender: Any?
 
+    /// ライブ変換の世代カウンタ。
+    /// push_char のたびにインクリメントし、stale なバックグラウンド推論結果を廃棄する。
+    /// karukan-im ではデバウンスなしで同期実行するため、ここでもデバウンスは設けない。
+    private var liveConversionGeneration: Int = 0
+
     // -----------------------------------------------------------------------
     // MARK: - Lifecycle
     // -----------------------------------------------------------------------
@@ -145,6 +150,10 @@ final class KarukanInputController: IMKInputController {
         logger.debug("push_char('\(chars)') consumed=\(consumed)")
         updateClientState(client: sender)
         updateCandidatesPanel(sender: sender)
+        // 文字入力後にライブ変換をトリガー（Composing 状態でなければ内部で無視される）
+        if consumed {
+            triggerLiveConversion(sender: sender)
+        }
         return consumed
     }
 
@@ -317,6 +326,61 @@ final class KarukanInputController: IMKInputController {
                 selectionRange: NSRange(location: cursorCharIndex, length: 0),
                 replacementRange: NSRange(location: NSNotFound, length: 0)
             )
+        }
+
+        // Empty 状態に戻ったら generation をインクリメントして残存タスクを無効化する
+        if karukan_is_empty(session) != 0 {
+            liveConversionGeneration &+= 1
+        }
+    }
+
+    /// バックグラウンドで推論を起動し、完了後にメインスレッドでライブ変換結果を適用する。
+    ///
+    /// - メインスレッドで現在のひらがなを取得（karukan_get_composing_hiragana）
+    /// - バックグラウンドで Arc<KanaKanjiConverter> のみ使って変換（karukan_convert_top1）
+    /// - generation が一致するときのみ結果を適用（stale な結果を廃棄）
+    ///
+    /// karukan-im との対比: Linux 版は同期実行だが macOS はメインスレッドをブロックできないため非同期にする。
+    private func triggerLiveConversion(sender: Any?) {
+        guard let session else { return }
+
+        // メインスレッドで現在のひらがなを取得
+        var buf = [CChar](repeating: 0, count: 512)
+        let len = karukan_get_composing_hiragana(session, &buf, buf.count)
+        guard len > 0 else { return }
+        let hiragana = String(cString: buf)
+
+        // 世代をインクリメント（前の推論が完了しても世代が違えば適用されない）
+        liveConversionGeneration &+= 1
+        let gen = liveConversionGeneration
+
+        logger.debug("triggerLiveConversion: '\(hiragana)' gen=\(gen)")
+
+        // self を strong capture してセッションが解放されないようにする。
+        // deinit は DispatchQueue.main で動くため、このクロージャが完了するまで
+        // karukan_session_free は呼ばれない。
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            // Arc<KanaKanjiConverter> のみアクセス（Send+Sync）
+            let resultPtr = karukan_convert_top1(session, hiragana)
+            guard let resultPtr else {
+                logger.debug("karukan_convert_top1: nil (gen=\(gen))")
+                return
+            }
+            let candidate = String(cString: resultPtr)
+            karukan_free_string(resultPtr)
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                // stale な結果は廃棄
+                guard self.liveConversionGeneration == gen else {
+                    logger.debug("live conversion discarded (stale gen=\(gen))")
+                    return
+                }
+                logger.debug("apply_live_candidate: '\(candidate)' gen=\(gen)")
+                if karukan_apply_live_candidate(session, candidate) != 0 {
+                    self.updateClientState(client: sender ?? self.client())
+                }
+            }
         }
     }
 

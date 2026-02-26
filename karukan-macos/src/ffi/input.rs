@@ -84,3 +84,31 @@ pub extern "C" fn karukan_select_candidate(
     }))
     .unwrap_or(0)
 }
+
+/// バックグラウンド推論の結果を session に適用する。
+///
+/// Composing 状態でなければ無視する（stale な結果が Conversion 中に届いた場合など）。
+/// preedit を変換済みテキストに更新し、dirty フラグを立てる。
+///
+/// メインスレッドからのみ呼ぶこと。
+///
+/// 戻り値: 1=適用成功（preedit dirty）、0=Composing 状態でなく無視した
+#[unsafe(no_mangle)]
+pub extern "C" fn karukan_apply_live_candidate(
+    session: *mut KarukanSession,
+    candidate_utf8: *const c_char,
+) -> c_int {
+    std::panic::catch_unwind(AssertUnwindSafe(|| {
+        let s = ffi_mut!(session, 0);
+        if candidate_utf8.is_null() {
+            return 0;
+        }
+        let candidate = match unsafe { std::ffi::CStr::from_ptr(candidate_utf8) }.to_str() {
+            Ok(s) => s,
+            Err(_) => return 0,
+        };
+        s.apply_live_candidate(candidate);
+        if s.preedit.dirty { 1 } else { 0 }
+    }))
+    .unwrap_or(0)
+}

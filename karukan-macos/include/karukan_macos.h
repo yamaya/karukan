@@ -20,6 +20,7 @@
 #ifndef KARUKAN_MACOS_H
 #define KARUKAN_MACOS_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -212,6 +213,61 @@ uint32_t karukan_get_candidate_cursor(const KarukanSession* session);
  * Returns 0 if session is NULL.
  */
 int karukan_select_candidate(KarukanSession* session, uint32_t index);
+
+/* -------------------------------------------------------------------------
+ * Live conversion
+ *
+ * triggerLiveConversion の非同期フロー:
+ *   [main]       karukan_get_composing_hiragana() でひらがなを取得
+ *   [background] karukan_convert_top1() で推論（Arc<KanaKanjiConverter> のみ使用）
+ *   [main]       karukan_apply_live_candidate() で結果を適用
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Composing 状態のひらがなを buf にコピーする。
+ *
+ * バックグラウンドスレッドで推論を起動する直前に、メインスレッドから呼ぶこと。
+ * Composing 状態でなければ 0 を返す（コピーなし）。
+ *
+ * 戻り値: コピーしたバイト数（null 終端除く）。session または buf が NULL なら 0。
+ */
+int karukan_get_composing_hiragana(
+    const KarukanSession* session,
+    char* buf,
+    size_t buf_len);
+
+/**
+ * ひらがなを変換して上位1候補をヒープ確保した文字列で返す。
+ *
+ * Arc<KanaKanjiConverter> のみ使用するためバックグラウンドスレッドから安全に呼べる。
+ * 呼び出し中に session が解放されないことを呼び出し側が保証すること（Swift では
+ * クロージャ内で self を strong capture することで保証する）。
+ *
+ * 戻り値: null 終端 UTF-8 文字列（karukan_free_string で解放）。
+ *         モデル未ロード・エラー時は NULL。
+ */
+char* karukan_convert_top1(
+    const KarukanSession* session,
+    const char* hiragana_utf8);
+
+/**
+ * karukan_convert_top1 が返したポインタを解放する。
+ *
+ * NULL を渡すと no-op。
+ */
+void karukan_free_string(char* ptr);
+
+/**
+ * バックグラウンド推論の結果を session に適用する。
+ *
+ * Composing 状態でなければ無視する。preedit を変換済みテキストに更新し dirty にする。
+ * メインスレッドからのみ呼ぶこと。
+ *
+ * 戻り値: 1=適用成功, 0=Composing 状態でなく無視した
+ */
+int karukan_apply_live_candidate(
+    KarukanSession* session,
+    const char* candidate_utf8);
 
 #ifdef __cplusplus
 }
