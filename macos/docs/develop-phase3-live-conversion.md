@@ -458,30 +458,30 @@ if karukan_is_empty(session) != 0 {
 ### ライブ変換の基本動作
 
 ```text
-[ ] "nihongo" 入力中に候補ウィンドウなしで preedit が「日本語」になる
-[ ] Enter で「日本語」がコミットされる（ひらがなでなく変換済み）
-[ ] Escape 1回目: preedit が「にほんご」に戻る
-[ ] Escape 2回目: 入力全キャンセル（preedit 消える）
+[x] "nihongo" 入力中に候補ウィンドウなしで preedit が「日本語」になる
+[x] Enter で「日本語」がコミットされる（ひらがなでなく変換済み）
+[x] Escape 1回目: preedit が「にほんご」に戻る
+[x] Escape 2回目: 入力全キャンセル（preedit 消える）
 ```
 
 ### Space → Conversion との連携
 
 ```text
-[ ] ライブ変換中（「日本語」表示）に Space → 候補ウィンドウが開く
-[ ] その際「日本語」が先頭候補として残っている
+[x] ライブ変換中（「日本語」表示）に Space → 候補ウィンドウが開く
+[x] その際「日本語」が先頭候補として残っている
 ```
 
 ### 学習キャッシュとの連携
 
 ```text
-[ ] Enter でライブ変換をコミットすると learning.tsv に記録される
-[ ] 次回同じ読みで learning 候補が先頭に来る
+[x] Enter でライブ変換をコミットすると learning.tsv に記録される
+[x] 次回同じ読みで learning 候補が先頭に来る
 ```
 
 ### 非同期安全性
 
 ```text
-[ ] 高速タイピング中にクラッシュしない
+[x] 高速タイピング中にクラッシュしない
 [ ] stale な推論結果が混入しない（世代カウンタで弾かれる）
 [ ] モデルロード前（converter = None）でもクラッシュしない
 ```
@@ -501,13 +501,13 @@ if karukan_is_empty(session) != 0 {
 
 ## 完了条件（Acceptance Criteria）
 
-- [ ] `cargo build -p karukan-macos` がエラーなく成功する
-- [ ] "nihongo" 入力中にスペース不要で「日本語」が preedit に表示される
-- [ ] Enter で「日本語」がコミットされる
-- [ ] Escape 2段階が正しく動く（live クリア → 全キャンセル）
-- [ ] Space で候補ウィンドウが開き、live 候補が先頭に残っている
-- [ ] 高速タイピング（100ms/key 以下）でクラッシュしない
-- [ ] `log stream --predicate 'subsystem == "com.example.karukan"'` でエラーログが出ない
+- [x] `cargo build -p karukan-macos` がエラーなく成功する
+- [x] "nihongo" 入力中にスペース不要で「日本語」が preedit に表示される
+- [x] Enter で「日本語」がコミットされる
+- [x] Escape 2段階が正しく動く（live クリア → 全キャンセル）
+- [x] Space で候補ウィンドウが開き、live 候補が先頭に残っている
+- [x] 高速タイピング（100ms/key 以下）でクラッシュしない
+- [x] `log stream --predicate 'subsystem == "com.example.karukan"'` でエラーログが出ない
 
 ---
 
