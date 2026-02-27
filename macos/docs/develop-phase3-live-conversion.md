@@ -538,6 +538,167 @@ if karukan_is_empty(session) != 0 {
 
 ---
 
+## Phase 3.7: 子音 pending 遅延表示
+
+### 概要
+
+ローマ字入力で子音キー（k, s, t, …）を打った瞬間、preedit に「k」が一瞬表示されてからかなに変わる"ちらつき"が発生する。これを解消するため、**子音のみ pending の状態では preedit 更新を一定時間（デフォルト 0.2s）遅延**し、後続キーが来ればかなだけを表示する。
+
+```text
+通常:
+  k  → preedit "k" → a → preedit "か"
+       ↑ ちらつき
+
+遅延版:
+  k  → (何も表示せず 0.2s 待つ) → a → preedit "か"   ← 高速入力: ちらつきなし
+  k  → (0.2s 経過)              → preedit "k"         ← 低速入力: 遅延後に表示
+```
+
+### 設計方針
+
+- **Rust 側は即座にキーを処理する**（romaji の状態は常に最新）
+- **Swift 側で preedit の UI 更新のみを遅延する**（Timer ベース）
+- 遅延秒数は `config.toml` の `consonant_delay_sec` で設定可能（デフォルト 0.2、0 なら即表示＝従来動作）
+
+### Rust 側変更
+
+#### `session.rs` — `is_consonant_pending()` を追加
+
+直前のキー入力が子音であり、romaji converter がまだかなに変換していない（母音待ち）状態を判定する。
+`input_buf` にすでにかなが存在するかは問わない（「か**k**」の 2 文字目の "k" でも遅延する）。
+
+```rust
+/// romaji converter に未確定の子音が残っているか。
+/// 「k」「sh」「ch」など母音待ちの状態で true を返す。
+/// Swift 側が preedit 遅延の判定に使う。
+pub fn is_consonant_pending(&self) -> bool {
+    self.romaji.has_pending()
+}
+```
+
+#### `ffi/query.rs` — `karukan_is_consonant_pending` を追加
+
+```rust
+/// 子音のみ pending かを返す（1=pending, 0=それ以外）。
+#[unsafe(no_mangle)]
+pub extern "C" fn karukan_is_consonant_pending(
+    session: *const KarukanSession,
+) -> c_int {
+    std::panic::catch_unwind(|| {
+        if ffi_ref!(session, 0).is_consonant_pending() { 1 } else { 0 }
+    })
+    .unwrap_or(0)
+}
+```
+
+#### `karukan_macos.h` に宣言を追加
+
+```c
+/// 子音のみ pending かを返す（1=pending, 0=それ以外）。
+int karukan_is_consonant_pending(const KarukanSession* session);
+```
+
+### Swift 側変更（`KarukanInputController.swift`）
+
+#### プロパティ追加
+
+```swift
+/// 子音 pending 遅延表示用タイマー。
+/// タイマー発火前に次のキーが来ればキャンセルされ、ちらつきを防ぐ。
+private var consonantDelayTimer: Timer?
+
+/// 子音 pending 遅延秒数（0 で無効＝従来動作）。
+private let consonantDelaySec: TimeInterval = 0.2
+```
+
+#### `handle(_:client:)` の変更
+
+```swift
+override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
+    guard initialized, let session else { return false }
+    currentSender = sender
+
+    // ── 1. 既存の遅延タイマーをキャンセル ──
+    consonantDelayTimer?.invalidate()
+    consonantDelayTimer = nil
+
+    // ── 2. Rust にキーを送る（常に即座に処理） ──
+    var consumed = false
+    if let key = KarukanMacOSKey.from(keyCode: event.keyCode) {
+        consumed = karukan_push_key(session, key.rawValue) != 0
+    } else if let chars = event.characters {
+        consumed = chars.withCString { karukan_push_char(session, $0) != 0 }
+        if consumed { triggerLiveConversion(sender: sender) }
+    }
+
+    // ── 3. 子音 pending なら preedit 更新を遅延 ──
+    if consonantDelaySec > 0
+        && karukan_is_consonant_pending(session) != 0
+    {
+        // 候補パネルは即更新（preedit だけ遅延）
+        updateCandidatesPanel(sender: sender)
+
+        consonantDelayTimer = Timer.scheduledTimer(
+            withTimeInterval: consonantDelaySec,
+            repeats: false
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.consonantDelayTimer = nil
+            self.updateClientState(client: sender ?? self.client())
+        }
+        return consumed
+    }
+
+    // ── 4. 通常パス: 即座に preedit 更新 ──
+    updateClientState(client: sender)
+    updateCandidatesPanel(sender: sender)
+    return consumed
+}
+```
+
+#### `deactivateServer` でのクリーンアップ
+
+```swift
+override func deactivateServer(_ sender: Any!) {
+    consonantDelayTimer?.invalidate()
+    consonantDelayTimer = nil
+    // ... 既存の deactivate 処理 ...
+}
+```
+
+### ライブ変換との相互作用
+
+| シナリオ | 動作 |
+|---------|------|
+| ライブ変換 OFF + 子音 pending | preedit 更新を遅延。タイマー発火で「k」を表示 |
+| ライブ変換 ON + 子音 pending | preedit 更新を遅延。かなが生成されてからライブ変換が走る（子音のみでは推論不要） |
+| 子音の後すぐに母音 | タイマーをキャンセル → 即座にかな表示 → ライブ変換トリガー |
+
+子音 pending の間はかなが生成されていないため `triggerLiveConversion` は `karukan_get_composing_hiragana` が 0 を返してスキップされる。つまり **遅延機能とライブ変換は干渉しない**。
+
+### テスト要件
+
+```text
+[ ] "ka" を高速入力（< 0.2s 間隔）→ "k" が preedit に表示されず「か」だけ表示
+[ ] "k" を入力して 0.2s 以上待つ → preedit に "k" が表示される
+[ ] "k" の後に "k" → "っ" に変換される（タイマーリセット動作）
+[ ] consonantDelaySec = 0 の場合 → 従来動作（即座に "k" を表示）
+[ ] 子音 pending 中にアプリ切替（deactivateServer）→ クラッシュしない
+[ ] ライブ変換 ON 時: "nihongo" 高速入力 → ちらつきなく「日本語」が表示される
+```
+
+### 設定
+
+将来的に `~/.config/karukan-im/config.toml` で遅延秒数を設定可能にする。
+
+```toml
+[input]
+# 子音 pending 時の preedit 遅延（秒）。0 で無効。
+consonant_delay_sec = 0.2
+```
+
+---
+
 ## Phase 4 への引き継ぎ事項
 
 1. ライブ変換の **有効/無効トグル**（Ctrl+Shift+L 相当）— Phase 4 で設定 UI を追加する際に実装。
