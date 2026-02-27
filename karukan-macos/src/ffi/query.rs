@@ -101,6 +101,24 @@ pub extern "C" fn karukan_is_empty(session: *const KarukanSession) -> c_int {
     .unwrap_or(1) // default to "empty" on error — safer than claiming composing
 }
 
+/// Returns `1` if the romaji converter has an unconverted consonant pending
+/// (e.g. "k", "sh", "ch"), `0` otherwise.
+///
+/// Swift uses this to decide whether to delay the preedit update so that
+/// the bare consonant does not flicker before being resolved to kana.
+/// Returns `0` if `session` is `NULL`.
+#[unsafe(no_mangle)]
+pub extern "C" fn karukan_is_consonant_pending(session: *const KarukanSession) -> c_int {
+    std::panic::catch_unwind(|| {
+        if ffi_ref!(session, 0).is_consonant_pending() {
+            1
+        } else {
+            0
+        }
+    })
+    .unwrap_or(0)
+}
+
 // ---------------------------------------------------------------------------
 // Candidates
 // ---------------------------------------------------------------------------

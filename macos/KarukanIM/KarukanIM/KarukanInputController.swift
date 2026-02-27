@@ -55,6 +55,13 @@ final class KarukanInputController: IMKInputController {
     /// Intel Mac では 3-5 倍になる可能性があるため 30 で余裕を持たせている。
     private static let kLiveConversionMaxChars = 30
 
+    /// 子音 pending 遅延表示用タイマー。
+    /// タイマー発火前に次のキーが来ればキャンセルされ、ちらつきを防ぐ。
+    private var consonantDelayTimer: Timer?
+
+    /// 子音 pending 遅延秒数（0 で無効＝従来動作）。
+    private let consonantDelaySec: TimeInterval = 0.1
+
     /// ライブ変換の有効/無効フラグ。UserDefaults に永続化される。
     /// Ctrl+Shift+L でトグル。デフォルトは有効。
     private var isLiveConversionEnabled: Bool {
@@ -148,6 +155,10 @@ final class KarukanInputController: IMKInputController {
         guard initialized, let session else { return false }
         guard event.type == .keyDown else { return false }
 
+        // 子音遅延タイマーをキャンセル（次のキーが来たので即座に最新状態へ更新）
+        consonantDelayTimer?.invalidate()
+        consonantDelayTimer = nil
+
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
 
         // Ctrl+Shift+L: ライブ変換のオン/オフトグル（37 = kVK_ANSI_L）
@@ -184,6 +195,24 @@ final class KarukanInputController: IMKInputController {
             karukan_push_char(session, ptr) != 0
         }
         logger.debug("push_char('\(chars)') consumed=\(consumed)")
+
+        // 子音 pending なら preedit 更新を遅延してちらつきを防ぐ
+        if consumed
+            && consonantDelaySec > 0
+            && karukan_is_consonant_pending(session) != 0
+        {
+            updateCandidatesPanel(sender: sender)
+            consonantDelayTimer = Timer.scheduledTimer(
+                withTimeInterval: consonantDelaySec,
+                repeats: false
+            ) { [weak self] _ in
+                guard let self else { return }
+                self.consonantDelayTimer = nil
+                self.updateClientState(client: self.currentSender ?? self.client())
+            }
+            return consumed
+        }
+
         updateClientState(client: sender)
         updateCandidatesPanel(sender: sender)
         // 文字入力後にライブ変換をトリガー（Composing 状態でなければ内部で無視される）
@@ -283,6 +312,8 @@ final class KarukanInputController: IMKInputController {
 
     override func deactivateServer(_ sender: Any!) {
         logger.info("deactivateServer")
+        consonantDelayTimer?.invalidate()
+        consonantDelayTimer = nil
         guard let session else {
             super.deactivateServer(sender)
             return

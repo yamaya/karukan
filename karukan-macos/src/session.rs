@@ -348,6 +348,13 @@ impl KarukanSession {
         matches!(self.state, SessionState::Empty)
     }
 
+    /// romaji converter に未確定の子音が残っているか。
+    /// 「k」「sh」「ch」など母音待ちの状態で `true` を返す。
+    /// Swift 側が preedit 遅延の判定に使う。
+    pub fn is_consonant_pending(&self) -> bool {
+        !self.romaji.buffer().is_empty()
+    }
+
     /// Composing 状態のひらがなを返す。Composing でなければ `None`。
     ///
     /// バックグラウンドスレッドが推論を起動する前に、メインスレッドで取得するために使う。
@@ -419,10 +426,11 @@ impl KarukanSession {
     /// printable input while composing or when starting composition).
     pub fn push_char(&mut self, ch: char) -> bool {
         self.clear_flags();
-        // 新しい文字が入力されたので前回のライブ変換結果を無効化する。
-        // take() で取り出し、バックグラウンド推論が完了するまでの
-        // 一時的な表示ベースとして使う（フリッカー防止）。
-        let prev_live = self.live_candidate.take();
+        // ライブ変換結果が残っていれば、推論完了まで表示ベースとして使い続ける。
+        // clone() で参照し live_candidate は保持する。apply_live_candidate() が
+        // 新しい結果で上書きするか、do_commit/do_cancel で消費される。
+        // take() にすると連続キー入力で None になりひらがなフォールバックが起きる。
+        let prev_live = self.live_candidate.clone();
 
         // In Conversion state, any printable char cancels conversion and
         // re-enters Composing (commit the char as new input).
@@ -448,13 +456,20 @@ impl KarukanSession {
         }
 
         // Build preedit:
-        // prev_live がある場合（例: "日本"）はそれをベースにして "日本g" を表示する。
-        // バックグラウンド推論が完了するまでひらがな ("にほんg") を見せないことで
-        // フリッカーを防ぐ。推論完了後は apply_live_candidate が上書きする。
+        // prev_live がある場合（例: "今日"）はそれをベースにする。
+        //   - 新しいかなが生成された場合: prev_live + new_hiragana + romaji_buf
+        //     例: "今日" + "は" + "" = "今日は"（"今日h" → "今日は" に直接遷移）
+        //   - 子音のみ追加された場合: prev_live + romaji_buf
+        //     例: "今日" + "h" = "今日h"
+        // これにより文字数が一時的に減る中間状態（"今日" のみ）を避け、
+        // カーソルの前後ジャンプを防ぐ。推論完了後は apply_live_candidate が上書きする。
         // prev_live がなければ従来通り input_buf ひらがな + ローマ字バッファ。
         let romaji_buf = self.romaji.buffer().to_string();
-        let display_base = prev_live.as_deref().unwrap_or(&self.input_buf.text);
-        let preedit_text = format!("{}{}", display_base, romaji_buf);
+        let preedit_text = if let Some(ref live) = prev_live {
+            format!("{}{}{}", live, new_hiragana, romaji_buf)
+        } else {
+            format!("{}{}", self.input_buf.text, romaji_buf)
+        };
 
         if preedit_text.is_empty() {
             self.state = SessionState::Empty;
@@ -637,6 +652,10 @@ impl KarukanSession {
                 self.input_buf.delete_before_cursor();
             }
         }
+
+        // Backspace で文字が減ったのでライブ変換結果は stale — クリアする。
+        // 次の triggerLiveConversion で新しい結果が apply される。
+        self.live_candidate = None;
 
         let romaji_buf = self.romaji.buffer().to_string();
         let preedit_text = format!("{}{}", self.input_buf.text, romaji_buf);

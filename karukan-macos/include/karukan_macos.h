@@ -161,6 +161,16 @@ const char* karukan_get_commit(const KarukanSession* session);
  */
 int karukan_is_empty(const KarukanSession* session);
 
+/**
+ * Returns 1 if the romaji converter has an unconverted consonant pending
+ * (e.g. "k", "sh", "ch"), 0 otherwise.
+ *
+ * Swift uses this to decide whether to delay the preedit update so that
+ * the bare consonant does not flicker before being resolved to kana.
+ * Returns 0 if session is NULL.
+ */
+int karukan_is_consonant_pending(const KarukanSession* session);
+
 /* -------------------------------------------------------------------------
  * Persistence
  * ---------------------------------------------------------------------- */
