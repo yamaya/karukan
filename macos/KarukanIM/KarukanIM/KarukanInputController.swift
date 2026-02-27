@@ -253,10 +253,11 @@ final class KarukanInputController: IMKInputController {
     /// preedit を選択中の候補文字列で更新する。
     /// commit はここでは行わない（確定時は candidateSelected が呼ばれる）。
     override func candidateSelectionChanged(_ candidateString: NSAttributedString!) {
+        guard let c = (currentSender as AnyObject?) ?? (self.client() as AnyObject?) else { return }
+
         let text = candidateString.string
         logger.debug("candidateSelectionChanged: '\(text)'")
 
-        let c = (currentSender ?? client()) as AnyObject
         let attrStr = NSMutableAttributedString(string: text)
         attrStr.addAttribute(
             .underlineStyle,
