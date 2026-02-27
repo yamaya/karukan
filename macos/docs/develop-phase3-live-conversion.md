@@ -542,7 +542,7 @@ if karukan_is_empty(session) != 0 {
 
 ### 概要
 
-ローマ字入力で子音キー（k, s, t, …）を打った瞬間、preedit に「k」が一瞬表示されてからかなに変わる"ちらつき"が発生する。これを解消するため、**子音のみ pending の状態では preedit 更新を一定時間（デフォルト 0.2s）遅延**し、後続キーが来ればかなだけを表示する。
+ローマ字入力で子音キー（k, s, t, …）を打った瞬間、preedit に「k」が一瞬表示されてからかなに変わる"ちらつき"が発生する。これを解消するため、**子音のみ pending の状態では preedit 更新を一定時間（デフォルト 0.1s）遅延**し、後続キーが来ればかなだけを表示する。
 
 ```text
 通常:
@@ -550,15 +550,16 @@ if karukan_is_empty(session) != 0 {
        ↑ ちらつき
 
 遅延版:
-  k  → (何も表示せず 0.2s 待つ) → a → preedit "か"   ← 高速入力: ちらつきなし
-  k  → (0.2s 経過)              → preedit "k"         ← 低速入力: 遅延後に表示
+  k  → (何も表示せず 0.1s 待つ) → a → preedit "か"   ← 高速入力: ちらつきなし
+  k  → (0.1s 経過)              → preedit "k"         ← 低速入力: 遅延後に表示
 ```
 
 ### 設計方針
 
 - **Rust 側は即座にキーを処理する**（romaji の状態は常に最新）
 - **Swift 側で preedit の UI 更新のみを遅延する**（Timer ベース）
-- 遅延秒数は `config.toml` の `consonant_delay_sec` で設定可能（デフォルト 0.2、0 なら即表示＝従来動作）
+- 遅延秒数は `config.toml` の `consonant_delay_sec` で設定可能（デフォルト 0.1、0 なら即表示＝従来動作）
+  - 当初 0.2s で実装したが体感でもたつきがあったため 0.1s に調整
 
 ### Rust 側変更
 
@@ -608,7 +609,7 @@ int karukan_is_consonant_pending(const KarukanSession* session);
 private var consonantDelayTimer: Timer?
 
 /// 子音 pending 遅延秒数（0 で無効＝従来動作）。
-private let consonantDelaySec: TimeInterval = 0.2
+private let consonantDelaySec: TimeInterval = 0.1
 ```
 
 #### `handle(_:client:)` の変更
@@ -679,8 +680,8 @@ override func deactivateServer(_ sender: Any!) {
 ### テスト要件
 
 ```text
-[ ] "ka" を高速入力（< 0.2s 間隔）→ "k" が preedit に表示されず「か」だけ表示
-[ ] "k" を入力して 0.2s 以上待つ → preedit に "k" が表示される
+[ ] "ka" を高速入力（< 0.1s 間隔）→ "k" が preedit に表示されず「か」だけ表示
+[ ] "k" を入力して 0.1s 以上待つ → preedit に "k" が表示される
 [ ] "k" の後に "k" → "っ" に変換される（タイマーリセット動作）
 [ ] consonantDelaySec = 0 の場合 → 従来動作（即座に "k" を表示）
 [ ] 子音 pending 中にアプリ切替（deactivateServer）→ クラッシュしない
@@ -694,7 +695,95 @@ override func deactivateServer(_ sender: Any!) {
 ```toml
 [input]
 # 子音 pending 時の preedit 遅延（秒）。0 で無効。
-consonant_delay_sec = 0.2
+consonant_delay_sec = 0.1
+```
+
+---
+
+## Phase 3.8: ライブ変換 preedit 安定化
+
+### 概要
+
+Phase 3.5 のライブ変換では、キー入力のたびに preedit がひらがなに一瞬戻る「フリッカー」や、文字数の増減によるカーソルジャンプが発生していた。Phase 3.8 ではこれらを解消し、preedit の表示を安定化させる。
+
+### 問題 1: 連続キー入力でひらがなフォールバック
+
+#### 症状
+
+```text
+"オフィシャルオンライ" → n → n →
+setMarkedText: 'おふぃしゃるおんらいん'  ← ひらがなに戻る
+```
+
+#### 原因
+
+`push_char()` 内で `self.live_candidate.take()` を使っていたため、1回目の push_char で `live_candidate` が消費され、2回目では `None` になりひらがなにフォールバックしていた。子音遅延で1回目の preedit 更新がスキップされると、2回目で `prev_live = None` となり問題が顕在化する。
+
+#### 修正
+
+`take()` → `clone()` に変更。`live_candidate` は `apply_live_candidate()` が新しい結果で上書きするか、`do_commit()` / `do_cancel()` で消費されるまで保持する。
+
+```rust
+// Before:
+let prev_live = self.live_candidate.take();
+
+// After:
+let prev_live = self.live_candidate.clone();
+```
+
+### 問題 2: Backspace 後に stale な live_candidate が残留
+
+#### 症状
+
+```text
+"オフィシャル" → Backspace×全削除 → "o" →
+setMarkedText: 'オフィシャル'  ← 削除済みの結果が復活して消える
+```
+
+#### 原因
+
+`clone()` 化により Backspace で文字を全削除しても `live_candidate` がクリアされなくなった。
+
+#### 修正
+
+`do_backspace()` で `self.live_candidate = None` を追加。Backspace は文字を減らす操作なのでライブ変換結果は無条件にクリアする。
+
+### 問題 3: かな確定時のカーソルジャンプ
+
+#### 症状
+
+```text
+"今日h" → a →
+setMarkedText: '今日'    ← 文字減（カーソル後退）
+→ ライブ変換完了 →
+setMarkedText: '今日は'  ← 文字増（カーソル前進）
+```
+
+`setMarkedText` で文字数が減→増と変化し、カーソルが前後にジャンプして不快。
+
+#### 原因
+
+preedit を `prev_live + romaji_buf` で構築していたため、子音が母音と結合してかなになると romaji_buf が空になり、新しいかなが反映されない中間状態が発生していた。
+
+#### 修正
+
+preedit を `prev_live + new_hiragana + romaji_buf` で構築するように変更。新たに生成されたかなを即座に prev_live に付加することで文字数が減る中間状態を防ぐ。
+
+```rust
+// Before:
+let preedit_text = format!("{}{}", display_base, romaji_buf);
+
+// After:
+let preedit_text = if let Some(ref live) = prev_live {
+    format!("{}{}{}", live, new_hiragana, romaji_buf)
+} else {
+    format!("{}{}", self.input_buf.text, romaji_buf)
+};
+```
+
+```text
+Before: "今日h" → "今日"  → "今日は"  (文字減→増、カーソルジャンプ)
+After:  "今日h" → "今日は" → "今日は"  (文字数単調増加、スムーズ)
 ```
 
 ---
