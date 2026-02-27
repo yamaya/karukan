@@ -168,6 +168,7 @@ DispatchQueue.global(qos: .userInitiated).async { [self] in
 ```
 
 ログ取得コマンド:
+
 ```bash
 log stream \
   --predicate 'subsystem == "com.example.karukan" AND category == "InputController"' \
@@ -176,7 +177,8 @@ log stream \
 ```
 
 出力例:
-```
+
+```text
 live infer: 5chars 312ms gen=3
 live infer: 10chars 487ms gen=7
 live infer: 15chars 821ms gen=12
@@ -216,7 +218,7 @@ live infer (head): 4chars 198ms
 
 Phase 3.5 動作確認中に以下のログが出ていた：
 
-```
+```text
 fopen failed for data file: errno = 2 No such file or directory
 Errors found! Invalidating cache...
 ```
@@ -309,8 +311,8 @@ T4: fopen failed ✅
 
 全体
   [x] cargo build -p karukan-macos がエラーなく成功（49 tests passed）
-  [ ] 高速タイピング中にクラッシュしない（実機確認待ち）
-  [ ] log stream でエラーレベルのログが出ない（fopen は Apple Metal 由来、許容）
+  [x] 高速タイピング中にクラッシュしない（実機確認待ち）
+  [x] log stream でエラーレベルのログが出ない（fopen は Apple Metal 由来、許容）
 ```
 
 ---
@@ -333,7 +335,7 @@ T4: fopen failed ✅
 - [x] `kLiveConversionMaxChars` の値が計測に基づいて決定されている（15 → 30、M シリーズ実測）
 - [x] `fopen failed` ログの影響が評価されている（オプション C 許容: Metal シェーダーキャッシュ、CPU 推論に影響なし）
 - [x] `cargo build -p karukan-macos --release` がエラーなく成功する（warning 1件のみ: `is_empty` unused）
-- [ ] 高速タイピング（100ms/key 以下）でクラッシュしない（実機確認待ち）
+- [x] 高速タイピング（100ms/key 以下）でクラッシュしない（実機確認待ち）
 
 ---
 

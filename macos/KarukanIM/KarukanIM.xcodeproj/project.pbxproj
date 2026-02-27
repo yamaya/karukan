@@ -299,6 +299,7 @@
 			knownRegions = (
 				en,
 				Base,
+				ja,
 			);
 			mainGroup = 5490CA5B2F4ECC0200990600;
 			minimizedProjectReferenceProxies = 1;
@@ -383,7 +384,7 @@
 			shellPath = /bin/sh;
 			shellScript = "#!/usr/bin/env bash\nset -euo pipefail\n\nexport PATH=\"$HOME/.cargo/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\"\n\nREPO=\"${SRCROOT}/../../\"\nDYLIB=\"libkarukan_macos.dylib\"\n\nif [ \"${CONFIGURATION}\" = \"Release\" ]; then\n    CARGO_FLAGS=\"--release\"\n    RUST_DIR=\"${REPO}target/release\"\nelse\n    CARGO_FLAGS=\"\"\n    RUST_DIR=\"${REPO}target/debug\"\nfi\n\ncd \"${REPO}\"\ncargo build -p karukan-macos ${CARGO_FLAGS}\n\nDEST=\"${BUILT_PRODUCTS_DIR}/${FRAMEWORKS_FOLDER_PATH}/${DYLIB}\"\nmkdir -p \"${BUILT_PRODUCTS_DIR}/${FRAMEWORKS_FOLDER_PATH}\"\ncp \"${RUST_DIR}/${DYLIB}\" \"${DEST}\"\ninstall_name_tool -id \"@rpath/${DYLIB}\" \"${DEST}\"\necho \"\\u2713 ${DYLIB} \\u2192 ${DEST}\"\n";
 		};
-		5436F6032F4F0000003263AA /* Install */ = {
+		5436F6032F4F0000003263AA /* Install to Input Methods */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
