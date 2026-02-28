@@ -47,6 +47,9 @@ typedef enum {
     KARUKAN_KEY_UP        = 7,
     KARUKAN_KEY_DOWN      = 8,
     KARUKAN_KEY_TAB       = 9,
+    KARUKAN_KEY_CONVERT_HIRAGANA  = 10,  /* Ctrl+J */
+    KARUKAN_KEY_CONVERT_KATAKANA  = 11,  /* Ctrl+K */
+    KARUKAN_KEY_CONVERT_ASCII     = 12,  /* Ctrl+; */
 } KarukanKey;
 
 /* -------------------------------------------------------------------------

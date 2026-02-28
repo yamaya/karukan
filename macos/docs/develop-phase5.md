@@ -1,8 +1,10 @@
-# Phase 5 実装計画書: 設定画面・キーボードショートカット・インジケーターアイコン
+# Phase 5: 設定画面・キーボードショートカット・インジケーターアイコン
 
 > 前提: Phase 4（ライブ変換の洗練）完了・動作確認済み
 > 完了条件: Preference Pane による設定 UI、標準キーボードショートカット、
 > カスタムインジケーターアイコンが動作すること
+>
+> **実装状況**: T2 ✅ / T3 ✅ / T1 部分完了（SettingStore + entitlements 済み、Preference Pane ターゲット作成は手動）
 
 ---
 
@@ -656,7 +658,38 @@ T3: インジケーターアイコン
 
 ---
 
+## 実装済みファイル一覧
+
+### T2: キーボードショートカット・入力メニュー ✅
+
+| ファイル | 変更内容 |
+|---|---|
+| `karukan-macos/src/session.rs` | `KarukanKey` に ConvertHiragana/Katakana/Ascii 追加、`do_convert_*` 3 メソッド、逆変換テーブル `REVERSE_ROMAJI`、テスト 16 件追加 |
+| `karukan-macos/include/karukan_macos.h` | `KARUKAN_KEY_CONVERT_HIRAGANA/KATAKANA/ASCII` 定数追加 |
+| `KarukanInputController.swift` | Ctrl+J/K/; ハンドラ、`menu()` オーバーライド、`toggleLiveConversion`/`openPreferences` |
+
+### T3: インジケーターアイコン ✅
+
+| ファイル | 変更内容 |
+|---|---|
+| `KarukanIMExtension/Resources/hiragana.pdf` | 「あ」16×16pt テンプレートアイコン（新規） |
+| `KarukanIMExtension/Info.plist` | `tsInputModeMenuIconFileKey` 追加 |
+| `KarukanIM/Info.plist` | `tsInputModeMenuIconFileKey` 追加 |
+
+### T1: 設定画面（基盤） ✅ / Xcode ターゲット作成 🔧手動
+
+| ファイル | 変更内容 |
+|---|---|
+| `KarukanIM/SettingStore.swift` | `UserDefaults(suiteName:)` 共有ストア（新規） |
+| `KarukanInputController.swift` | `SettingStore` 経由に移行（`consonantDelaySec`, `autoCommitMaxChars`, `isLiveConversionEnabled`） |
+| `KarukanIM.entitlements` | `shared-preference.read-only` 追加 |
+| `Preferences/PreferencesController.swift` | Preference Pane ソース（新規、ターゲット作成手順コメント付き） |
+
+---
+
 ## Phase 6 への引き継ぎ候補
 
-1. **Universal Binary・公証・配布** — develop-plan.md の元 Phase 4 内容
-2. **設定項目の拡充** — キーバインドカスタマイズ、フォント設定等
+1. **Preference Pane ターゲット作成** — `PreferencesController.swift` のコメントに手順記載済み。XIB UI 構築を含む
+2. **Universal Binary・公証・配布** — develop-plan.md の元 Phase 4 内容
+3. **設定項目の拡充** — キーバインドカスタマイズ、フォント設定等
+4. **「ん」の逆変換改善** — 後続文字による `n`/`nn` 切り替え（現在は `nn` 固定）

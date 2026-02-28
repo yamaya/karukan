@@ -53,20 +53,27 @@ final class KarukanInputController: IMKInputController {
     ///   1-5 chars: ~30-45ms  /  6-10: ~35-55ms  /  11-15: ~45-72ms  /  16: 58ms
     /// 線形外挿: 30 chars ≒ 90ms — 十分許容範囲内。
     /// Intel Mac では 3-5 倍になる可能性があるため 30 で余裕を持たせている。
-    private static let kLiveConversionMaxChars = 30
-
     /// 子音 pending 遅延表示用タイマー。
     /// タイマー発火前に次のキーが来ればキャンセルされ、ちらつきを防ぐ。
     private var consonantDelayTimer: Timer?
 
-    /// 子音 pending 遅延秒数（0 で無効＝従来動作）。
-    private let consonantDelaySec: TimeInterval = 0.1
+    /// 子音 pending 遅延秒数（0 で無効＝従来動作）。SettingStore から読み取る。
+    private var consonantDelaySec: TimeInterval {
+        let v = SettingStore.defaults.double(forKey: SettingStore.consonantDelaySecKey)
+        return v > 0 ? v : 0.1
+    }
 
-    /// ライブ変換の有効/無効フラグ。UserDefaults に永続化される。
+    /// 自動コミット閾値（文字数）。SettingStore から読み取る。
+    private var autoCommitMaxChars: Int {
+        let v = SettingStore.defaults.integer(forKey: SettingStore.autoCommitMaxCharsKey)
+        return v > 0 ? v : 30
+    }
+
+    /// ライブ変換の有効/無効フラグ。SettingStore に永続化される。
     /// Ctrl+Shift+L でトグル。デフォルトは有効。
     private var isLiveConversionEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: "karukanLiveConversionEnabled") }
-        set { UserDefaults.standard.set(newValue, forKey: "karukanLiveConversionEnabled") }
+        get { SettingStore.defaults.bool(forKey: SettingStore.liveConversionEnabledKey) }
+        set { SettingStore.defaults.set(newValue, forKey: SettingStore.liveConversionEnabledKey) }
     }
 
     // -----------------------------------------------------------------------
@@ -77,7 +84,7 @@ final class KarukanInputController: IMKInputController {
         super.init(server: server, delegate: delegate, client: client)
 
         // UserDefaults のデフォルト値を登録（初回起動時のみ有効）
-        UserDefaults.standard.register(defaults: ["karukanLiveConversionEnabled": true])
+        SettingStore.registerDefaults()
 
         // セッション生成（軽量・メインスレッド OK）
         guard let ptr = karukan_session_new() else {
@@ -170,6 +177,30 @@ final class KarukanInputController: IMKInputController {
                 _ = karukan_push_key(session, KarukanMacOSKey.escape.rawValue)
                 updateClientState(client: sender)
             }
+            return true
+        }
+
+        // Ctrl+J: ひらがな確定（38 = kVK_ANSI_J）
+        if event.keyCode == 38, flags == [.control] {
+            _ = karukan_push_key(session, KarukanMacOSKey.convertHiragana.rawValue)
+            updateClientState(client: sender)
+            candidatesPanel?.hide()
+            return true
+        }
+
+        // Ctrl+K: カタカナ確定（40 = kVK_ANSI_K）
+        if event.keyCode == 40, flags == [.control] {
+            _ = karukan_push_key(session, KarukanMacOSKey.convertKatakana.rawValue)
+            updateClientState(client: sender)
+            candidatesPanel?.hide()
+            return true
+        }
+
+        // Ctrl+;: 半角英数確定（41 = kVK_ANSI_Semicolon）
+        if event.keyCode == 41, flags == [.control] {
+            _ = karukan_push_key(session, KarukanMacOSKey.convertAscii.rawValue)
+            updateClientState(client: sender)
+            candidatesPanel?.hide()
             return true
         }
 
@@ -407,7 +438,7 @@ final class KarukanInputController: IMKInputController {
     /// - メインスレッドで現在のひらがなを取得（karukan_get_composing_hiragana）
     /// - バックグラウンドで Arc<KanaKanjiConverter> のみ使って変換（karukan_convert_top1）
     /// - generation が一致するときのみ結果を適用（stale な結果を廃棄）
-    /// - 長文（> kLiveConversionMaxChars）の場合は文節境界で分割し先頭文節のみコミット、
+    /// - 長文（> autoCommitMaxChars）の場合は文節境界で分割し先頭文節のみコミット、
     ///   残余ひらがなを karukan_set_composing_hiragana で次の Composing へ引き継ぐ
     ///
     /// karukan-im との対比: Linux 版は同期実行だが macOS はメインスレッドをブロックできないため非同期にする。
@@ -456,7 +487,7 @@ final class KarukanInputController: IMKInputController {
             // tailHiragana: コミット後に次の Composing として注入する残余ひらがな
             var autoCommitCandidate = candidate
             var tailHiragana = ""
-            if hiragana.count > Self.kLiveConversionMaxChars,
+            if hiragana.count > self.autoCommitMaxChars,
                let boundaryIdx = Self.findClauseBoundary(in: hiragana) {
                 let headHiragana = String(hiragana[..<boundaryIdx])
                 let tail = String(hiragana[boundaryIdx...])
@@ -482,7 +513,7 @@ final class KarukanInputController: IMKInputController {
                 }
                 logger.debug("apply_live_candidate: '\(autoCommitCandidate)' gen=\(gen)")
                 if karukan_apply_live_candidate(session, autoCommitCandidate) != 0 {
-                    if hiragana.count > Self.kLiveConversionMaxChars {
+                    if hiragana.count > self.autoCommitMaxChars {
                         // 変換済みテキストをコミット（live_candidate が Some(漢字) の状態で Return）
                         _ = karukan_push_key(session, KarukanMacOSKey.returnKey.rawValue)
                         if !tailHiragana.isEmpty {
@@ -552,6 +583,51 @@ final class KarukanInputController: IMKInputController {
             replacementRange: NSRange(location: NSNotFound, length: 0)
         )
     }
+
+    // -----------------------------------------------------------------------
+    // MARK: - 入力メニュー（メニューバードロップダウン）
+    // -----------------------------------------------------------------------
+
+    override func menu() -> NSMenu! {
+        let menu = NSMenu(title: "Karukan")
+
+        // ライブ変換トグル
+        let liveItem = NSMenuItem(
+            title: "ライブ変換",
+            action: #selector(toggleLiveConversion(_:)),
+            keyEquivalent: ""
+        )
+        liveItem.state = isLiveConversionEnabled ? .on : .off
+        menu.addItem(liveItem)
+
+        menu.addItem(.separator())
+
+        // 設定画面を開く
+        let prefItem = NSMenuItem(
+            title: "設定...",
+            action: #selector(openPreferences(_:)),
+            keyEquivalent: ""
+        )
+        menu.addItem(prefItem)
+
+        return menu
+    }
+
+    @objc func toggleLiveConversion(_ sender: Any) {
+        isLiveConversionEnabled.toggle()
+        logger.info("live conversion toggled via menu: \(self.isLiveConversionEnabled ? "enabled" : "disabled")")
+        if !isLiveConversionEnabled, let session {
+            _ = karukan_push_key(session, KarukanMacOSKey.escape.rawValue)
+            updateClientState(client: currentSender ?? client())
+        }
+    }
+
+    @objc func openPreferences(_ sender: Any) {
+        // macOS 15+: キーボード設定に直接遷移
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -559,15 +635,18 @@ final class KarukanInputController: IMKInputController {
 // ---------------------------------------------------------------------------
 
 private enum KarukanMacOSKey: UInt32 {
-    case returnKey  = 1
-    case backspace  = 2
-    case escape     = 3
-    case space      = 4
-    case leftArrow  = 5
-    case rightArrow = 6
-    case upArrow    = 7
-    case downArrow  = 8
-    case tab        = 9
+    case returnKey       = 1
+    case backspace       = 2
+    case escape          = 3
+    case space           = 4
+    case leftArrow       = 5
+    case rightArrow      = 6
+    case upArrow         = 7
+    case downArrow       = 8
+    case tab             = 9
+    case convertHiragana = 10
+    case convertKatakana = 11
+    case convertAscii    = 12
 
     static func from(keyCode: UInt16) -> KarukanMacOSKey? {
         switch keyCode {

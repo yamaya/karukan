@@ -4,21 +4,14 @@
 <dict>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-
 	<key>CFBundleName</key>
 	<string>Karukan</string>
-
 	<key>CFBundleDisplayName</key>
 	<string>Karukan</string>
-
-	<!-- IMK: 接続名。ホストアプリの InputMethodConnectionName と一致させる -->
 	<key>InputMethodConnectionName</key>
 	<string>KarukanIM</string>
-
 	<key>InputMethodServerControllerClass</key>
 	<string>KarukanIMExtension.KarukanInputController</string>
-
-	<!-- App Extension エントリポイント (NSExtensionFoundation ではなく inputmethodkit) -->
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionPrincipalClass</key>
@@ -26,32 +19,44 @@
 		<key>NSExtensionPointIdentifier</key>
 		<string>com.apple.inputmethodkit</string>
 	</dict>
-
-	<!-- NSPrincipalClass は NSExtension 内の NSExtensionPrincipalClass と一致させる -->
 	<key>NSPrincipalClass</key>
 	<string>KarukanIMExtension.KarukanInputController</string>
-
-	<!-- 入力ソースのカテゴリ。これがないと入力ソース一覧に表示されない -->
 	<key>ComponentCategory</key>
 	<string>TIInputSourceTypeKeyboardInputMethodWithDictionary</string>
-
-	<!-- 入力モード定義 -->
+	<key>tsInputMethodIconFileKey</key>
+	<string>Hiragana.tiff</string>
+	<key>tsInputMethodCharacterRepertoireKey</key>
+	<array>
+		<string>Hira</string>
+	</array>
 	<key>ComponentInputModeDict</key>
 	<dict>
 		<key>tsInputModeListKey</key>
 		<dict>
 			<key>com.example.inputmethod.karukan.hiragana</key>
 			<dict>
+				<key>TISInputSourceID</key>
+				<string>com.example.inputmethod.karukan.hiragana</string>
+				<key>TISIntendedLanguage</key>
+				<string>ja</string>
 				<key>TISInputSourceIsASCIICapable</key>
 				<false/>
-				<key>TISInputSourceType</key>
-				<string>com.apple.input-method.Roman</string>
-				<key>TsInputMethodCharacterRepertoireKey</key>
+				<key>tsInputModeScriptKey</key>
+				<string>smJapanese</string>
+				<key>tsInputMethodCharacterRepertoireKey</key>
 				<array>
-					<string>Latn</string>
 					<string>Hira</string>
 					<string>Kana</string>
+					<string>Latn</string>
 				</array>
+				<key>tsInputModeMenuIconFileKey</key>
+				<string>Hiragana.tiff</string>
+				<key>tsInputModeAlternateMenuIconFileKey</key>
+				<string>Hiragana.tiff</string>
+				<key>tsInputModeDefaultStateKey</key>
+				<true/>
+				<key>tsInputModeIsVisibleKey</key>
+				<true/>
 			</dict>
 		</dict>
 	</dict>

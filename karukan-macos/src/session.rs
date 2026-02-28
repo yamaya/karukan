@@ -113,6 +113,9 @@ pub enum KarukanKey {
     Up = 7,
     Down = 8,
     Tab = 9,
+    ConvertHiragana = 10,
+    ConvertKatakana = 11,
+    ConvertAscii = 12,
 }
 
 impl KarukanKey {
@@ -128,6 +131,9 @@ impl KarukanKey {
             7 => Some(Self::Up),
             8 => Some(Self::Down),
             9 => Some(Self::Tab),
+            10 => Some(Self::ConvertHiragana),
+            11 => Some(Self::ConvertKatakana),
+            12 => Some(Self::ConvertAscii),
             _ => None,
         }
     }
@@ -500,6 +506,20 @@ impl KarukanSession {
             // ── Empty state: pass everything through ──────────────────────
             _ if matches!(self.state, SessionState::Empty) => false,
 
+            // ── Convert shortcuts (Composing + Conversion) ───────────────
+            KarukanKey::ConvertHiragana => {
+                self.do_convert_hiragana();
+                true
+            }
+            KarukanKey::ConvertKatakana => {
+                self.do_convert_katakana();
+                true
+            }
+            KarukanKey::ConvertAscii => {
+                self.do_convert_ascii();
+                true
+            }
+
             // ── Composing state ───────────────────────────────────────────
             KarukanKey::Return if matches!(self.state, SessionState::Composing) => {
                 self.do_commit();
@@ -666,6 +686,90 @@ impl KarukanSession {
         } else {
             self.update_preedit(&preedit_text);
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Private helpers — Convert shortcuts (Ctrl+J / Ctrl+K / Ctrl+;)
+    // -----------------------------------------------------------------------
+
+    /// Flush pending romaji buffer into `input_buf`.
+    fn flush_romaji(&mut self) {
+        let prev_len = self.romaji.output().chars().count();
+        let _ = self.romaji.flush();
+        let flushed: String = self.romaji.output().chars().skip(prev_len).collect();
+        if !flushed.is_empty() {
+            self.input_buf.insert(&flushed);
+        }
+    }
+
+    /// Restore hiragana from Conversion state before converting.
+    ///
+    /// If in Conversion state, restores `input_buf` from the saved hiragana
+    /// and transitions to Composing so that `do_convert_*` can operate on it.
+    fn restore_hiragana_if_conversion(&mut self) {
+        if let SessionState::Conversion(ref conv) = self.state {
+            let hiragana = conv.hiragana.clone();
+            self.candidate_cache.items.clear();
+            self.candidate_cache.cursor = 0;
+            self.input_buf.clear();
+            self.input_buf.insert(&hiragana);
+            self.romaji.reset();
+            self.state = SessionState::Composing;
+        }
+    }
+
+    /// Ctrl+J: ひらがなのまま確定。
+    fn do_convert_hiragana(&mut self) {
+        self.restore_hiragana_if_conversion();
+        self.flush_romaji();
+        if self.input_buf.text.is_empty() {
+            return;
+        }
+
+        let text = std::mem::take(&mut self.input_buf.text);
+        self.live_candidate = None;
+        self.input_buf.cursor_chars = 0;
+        self.romaji.reset();
+        self.state = SessionState::Empty;
+        self.commit.text = CString::new(text).unwrap_or_default();
+        self.commit.dirty = true;
+        self.update_preedit("");
+    }
+
+    /// Ctrl+K: カタカナに変換して確定。
+    fn do_convert_katakana(&mut self) {
+        self.restore_hiragana_if_conversion();
+        self.flush_romaji();
+        if self.input_buf.text.is_empty() {
+            return;
+        }
+
+        let katakana = karukan_engine::kana::hiragana_to_katakana(&self.input_buf.text);
+        self.live_candidate = None;
+        self.input_buf.clear();
+        self.romaji.reset();
+        self.state = SessionState::Empty;
+        self.commit.text = CString::new(katakana).unwrap_or_default();
+        self.commit.dirty = true;
+        self.update_preedit("");
+    }
+
+    /// Ctrl+;: 半角英数（ローマ字）に逆変換して確定。
+    fn do_convert_ascii(&mut self) {
+        self.restore_hiragana_if_conversion();
+        self.flush_romaji();
+        if self.input_buf.text.is_empty() {
+            return;
+        }
+
+        let romaji = hiragana_to_romaji(&self.input_buf.text);
+        self.live_candidate = None;
+        self.input_buf.clear();
+        self.romaji.reset();
+        self.state = SessionState::Empty;
+        self.commit.text = CString::new(romaji).unwrap_or_default();
+        self.commit.dirty = true;
+        self.update_preedit("");
     }
 
     // -----------------------------------------------------------------------
@@ -857,6 +961,160 @@ impl Default for KarukanSession {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// ---------------------------------------------------------------------------
+// Reverse romaji table (hiragana → romaji)
+// ---------------------------------------------------------------------------
+
+use std::sync::LazyLock;
+
+/// ひらがな→ローマ字の逆引きテーブル。
+///
+/// `karukan-engine` の `rules.rs` と同一のマッピングを逆方向にしたもの。
+/// 複数のローマ字表記がある場合は最も一般的なものを採用（例: "し" → "shi"）。
+/// エントリはひらがなの長い順にソート済み（最長一致のため）。
+static REVERSE_ROMAJI: LazyLock<Vec<(&str, &str)>> = LazyLock::new(|| {
+    let mut table: Vec<(&str, &str)> = vec![
+        // ── 拗音・特殊音（2文字以上のかな） ──
+        // きゃ行
+        ("きゃ", "kya"), ("きゅ", "kyu"), ("きょ", "kyo"),
+        ("きぃ", "kyi"), ("きぇ", "kye"),
+        // くぁ行
+        ("くぁ", "kwa"), ("くぃ", "kwi"), ("くぅ", "kwu"),
+        ("くぇ", "kwe"), ("くぉ", "kwo"),
+        // ぎゃ行
+        ("ぎゃ", "gya"), ("ぎゅ", "gyu"), ("ぎょ", "gyo"),
+        ("ぎぃ", "gyi"), ("ぎぇ", "gye"),
+        // ぐぁ行
+        ("ぐぁ", "gwa"), ("ぐぃ", "gwi"), ("ぐぅ", "gwu"),
+        ("ぐぇ", "gwe"), ("ぐぉ", "gwo"),
+        // しゃ行
+        ("しゃ", "sha"), ("しゅ", "shu"), ("しょ", "sho"),
+        ("しぃ", "syi"), ("しぇ", "she"),
+        // すぁ行
+        ("すぁ", "swa"), ("すぃ", "swi"), ("すぅ", "swu"),
+        ("すぇ", "swe"), ("すぉ", "swo"),
+        // じゃ行
+        ("じゃ", "ja"), ("じゅ", "ju"), ("じょ", "jo"),
+        ("じぃ", "zyi"), ("じぇ", "je"),
+        // ずぁ行
+        ("ずぁ", "zwa"), ("ずぃ", "zwi"), ("ずぅ", "zwu"),
+        ("ずぇ", "zwe"), ("ずぉ", "zwo"),
+        // ちゃ行
+        ("ちゃ", "cha"), ("ちゅ", "chu"), ("ちょ", "cho"),
+        ("ちぃ", "tyi"), ("ちぇ", "che"),
+        // つぁ行
+        ("つぁ", "tsa"), ("つぃ", "tsi"), ("つぇ", "tse"), ("つぉ", "tso"),
+        // てゃ行
+        ("てゃ", "tha"), ("てぃ", "thi"), ("てゅ", "thu"),
+        ("てぇ", "the"), ("てょ", "tho"),
+        // とぁ行
+        ("とぁ", "twa"), ("とぃ", "twi"), ("とぅ", "twu"),
+        ("とぇ", "twe"), ("とぉ", "two"),
+        // ぢゃ行
+        ("ぢゃ", "dya"), ("ぢゅ", "dyu"), ("ぢょ", "dyo"),
+        ("ぢぃ", "dyi"), ("ぢぇ", "dye"),
+        // でゃ行
+        ("でゃ", "dha"), ("でぃ", "dhi"), ("でゅ", "dhu"),
+        ("でぇ", "dhe"), ("でょ", "dho"),
+        // どぁ行
+        ("どぁ", "dwa"), ("どぃ", "dwi"), ("どぅ", "dwu"),
+        ("どぇ", "dwe"), ("どぉ", "dwo"),
+        // にゃ行
+        ("にゃ", "nya"), ("にゅ", "nyu"), ("にょ", "nyo"),
+        ("にぃ", "nyi"), ("にぇ", "nye"),
+        // ひゃ行
+        ("ひゃ", "hya"), ("ひゅ", "hyu"), ("ひょ", "hyo"),
+        ("ひぃ", "hyi"), ("ひぇ", "hye"),
+        // ふぁ行
+        ("ふぁ", "fa"), ("ふぃ", "fi"), ("ふぇ", "fe"), ("ふぉ", "fo"),
+        ("ふゃ", "fya"), ("ふゅ", "fyu"), ("ふょ", "fyo"),
+        // びゃ行
+        ("びゃ", "bya"), ("びゅ", "byu"), ("びょ", "byo"),
+        ("びぃ", "byi"), ("びぇ", "bye"),
+        // ぴゃ行
+        ("ぴゃ", "pya"), ("ぴゅ", "pyu"), ("ぴょ", "pyo"),
+        ("ぴぃ", "pyi"), ("ぴぇ", "pye"),
+        // みゃ行
+        ("みゃ", "mya"), ("みゅ", "myu"), ("みょ", "myo"),
+        ("みぃ", "myi"), ("みぇ", "mye"),
+        // りゃ行
+        ("りゃ", "rya"), ("りゅ", "ryu"), ("りょ", "ryo"),
+        ("りぃ", "ryi"), ("りぇ", "rye"),
+        // うぁ行
+        ("うぁ", "wha"), ("うぃ", "wi"), ("うぇ", "we"), ("うぉ", "who"),
+        // いぇ
+        ("いぇ", "ye"),
+        // ゔ行
+        ("ゔぁ", "va"), ("ゔぃ", "vi"), ("ゔぇ", "ve"), ("ゔぉ", "vo"),
+        ("ゔゃ", "vya"), ("ゔゅ", "vyu"), ("ゔょ", "vyo"),
+
+        // ── 単独かな ──
+        ("あ", "a"), ("い", "i"), ("う", "u"), ("え", "e"), ("お", "o"),
+        ("か", "ka"), ("き", "ki"), ("く", "ku"), ("け", "ke"), ("こ", "ko"),
+        ("さ", "sa"), ("し", "shi"), ("す", "su"), ("せ", "se"), ("そ", "so"),
+        ("た", "ta"), ("ち", "chi"), ("つ", "tsu"), ("て", "te"), ("と", "to"),
+        ("な", "na"), ("に", "ni"), ("ぬ", "nu"), ("ね", "ne"), ("の", "no"),
+        ("は", "ha"), ("ひ", "hi"), ("ふ", "fu"), ("へ", "he"), ("ほ", "ho"),
+        ("ま", "ma"), ("み", "mi"), ("む", "mu"), ("め", "me"), ("も", "mo"),
+        ("や", "ya"), ("ゆ", "yu"), ("よ", "yo"),
+        ("ら", "ra"), ("り", "ri"), ("る", "ru"), ("れ", "re"), ("ろ", "ro"),
+        ("わ", "wa"), ("を", "wo"), ("ん", "nn"),
+        // 濁音
+        ("が", "ga"), ("ぎ", "gi"), ("ぐ", "gu"), ("げ", "ge"), ("ご", "go"),
+        ("ざ", "za"), ("じ", "ji"), ("ず", "zu"), ("ぜ", "ze"), ("ぞ", "zo"),
+        ("だ", "da"), ("ぢ", "di"), ("づ", "du"), ("で", "de"), ("ど", "do"),
+        ("ば", "ba"), ("び", "bi"), ("ぶ", "bu"), ("べ", "be"), ("ぼ", "bo"),
+        // 半濁音
+        ("ぱ", "pa"), ("ぴ", "pi"), ("ぷ", "pu"), ("ぺ", "pe"), ("ぽ", "po"),
+        // ゔ
+        ("ゔ", "vu"),
+        // 小文字
+        ("ぁ", "xa"), ("ぃ", "xi"), ("ぅ", "xu"), ("ぇ", "xe"), ("ぉ", "xo"),
+        ("ゃ", "xya"), ("ゅ", "xyu"), ("ょ", "xyo"),
+        ("っ", "xtu"), ("ゎ", "xwa"),
+        // 歴史的かな
+        ("ゐ", "wyi"), ("ゑ", "wye"),
+        // 長音記号
+        ("ー", "-"),
+        // 句読点・記号
+        ("、", ","), ("。", "."), ("・", "/"),
+        ("？", "?"), ("！", "!"), ("〜", "~"),
+        ("「", "["), ("」", "]"),
+        ("『", "z["), ("』", "z]"),
+        ("…", "z."), ("‥", "z,"),
+        ("←", "zh"), ("↓", "zj"), ("↑", "zk"), ("→", "zl"),
+    ];
+    // ひらがなの長い順にソート（最長一致）
+    table.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    table
+});
+
+/// ひらがなを最長一致でローマ字に逆変換する。
+fn hiragana_to_romaji(hiragana: &str) -> String {
+    let mut result = String::new();
+    let mut pos = 0;
+    let bytes = hiragana.as_bytes();
+    while pos < bytes.len() {
+        let remaining = &hiragana[pos..];
+        let mut matched = false;
+        for &(kana, romaji) in REVERSE_ROMAJI.iter() {
+            if remaining.starts_with(kana) {
+                result.push_str(romaji);
+                pos += kana.len();
+                matched = true;
+                break;
+            }
+        }
+        if !matched {
+            // テーブルにない文字はそのまま出力
+            let ch = remaining.chars().next().unwrap();
+            result.push(ch);
+            pos += ch.len_utf8();
+        }
+    }
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -1070,5 +1328,147 @@ mod tests {
         s.push_key(KarukanKey::Space);
         // Should be in Conversion, not committing a full-width space.
         assert!(!s.commit.dirty);
+    }
+
+    // ── Convert shortcut tests ──
+
+    #[test]
+    fn test_convert_hiragana_from_composing() {
+        let mut s = KarukanSession::new();
+        "nihongo".chars().for_each(|c| { s.push_char(c); });
+        assert_eq!(s.preedit.text.to_str().unwrap(), "にほんご");
+        s.push_key(KarukanKey::ConvertHiragana);
+        assert!(s.commit.dirty);
+        assert_eq!(s.commit.text.to_str().unwrap(), "にほんご");
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn test_convert_katakana_from_composing() {
+        let mut s = KarukanSession::new();
+        "nihongo".chars().for_each(|c| { s.push_char(c); });
+        s.push_key(KarukanKey::ConvertKatakana);
+        assert!(s.commit.dirty);
+        assert_eq!(s.commit.text.to_str().unwrap(), "ニホンゴ");
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn test_convert_ascii_from_composing() {
+        let mut s = KarukanSession::new();
+        "nihongo".chars().for_each(|c| { s.push_char(c); });
+        s.push_key(KarukanKey::ConvertAscii);
+        assert!(s.commit.dirty);
+        assert_eq!(s.commit.text.to_str().unwrap(), "nihonngo");
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn test_convert_hiragana_from_conversion() {
+        let mut s = KarukanSession::new();
+        s.push_char('a');
+        s.push_key(KarukanKey::Space); // enter Conversion
+        assert!(!s.candidate_cache.items.is_empty());
+        s.push_key(KarukanKey::ConvertHiragana);
+        assert!(s.commit.dirty);
+        assert_eq!(s.commit.text.to_str().unwrap(), "あ");
+        assert!(s.is_empty());
+        assert!(s.candidate_cache.items.is_empty());
+    }
+
+    #[test]
+    fn test_convert_katakana_from_conversion() {
+        let mut s = KarukanSession::new();
+        s.push_char('a');
+        s.push_key(KarukanKey::Space);
+        s.push_key(KarukanKey::ConvertKatakana);
+        assert!(s.commit.dirty);
+        assert_eq!(s.commit.text.to_str().unwrap(), "ア");
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn test_convert_ascii_from_conversion() {
+        let mut s = KarukanSession::new();
+        "ka".chars().for_each(|c| { s.push_char(c); });
+        s.push_key(KarukanKey::Space);
+        s.push_key(KarukanKey::ConvertAscii);
+        assert!(s.commit.dirty);
+        assert_eq!(s.commit.text.to_str().unwrap(), "ka");
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn test_convert_on_empty_not_consumed() {
+        let mut s = KarukanSession::new();
+        assert!(!s.push_key(KarukanKey::ConvertHiragana));
+        assert!(!s.push_key(KarukanKey::ConvertKatakana));
+        assert!(!s.push_key(KarukanKey::ConvertAscii));
+    }
+
+    #[test]
+    fn test_convert_flushes_pending_romaji() {
+        let mut s = KarukanSession::new();
+        s.push_char('k'); // pending romaji "k"
+        s.push_key(KarukanKey::ConvertHiragana);
+        assert!(s.commit.dirty);
+        // "k" should be flushed and committed
+        assert_eq!(s.commit.text.to_str().unwrap(), "k");
+        assert!(s.is_empty());
+    }
+
+    // ── Reverse romaji table tests ──
+
+    #[test]
+    fn test_reverse_romaji_basic() {
+        assert_eq!(hiragana_to_romaji("あいうえお"), "aiueo");
+        assert_eq!(hiragana_to_romaji("かきくけこ"), "kakikukeko");
+    }
+
+    #[test]
+    fn test_reverse_romaji_shi_chi_tsu() {
+        assert_eq!(hiragana_to_romaji("し"), "shi");
+        assert_eq!(hiragana_to_romaji("ち"), "chi");
+        assert_eq!(hiragana_to_romaji("つ"), "tsu");
+        assert_eq!(hiragana_to_romaji("ふ"), "fu");
+    }
+
+    #[test]
+    fn test_reverse_romaji_youon() {
+        assert_eq!(hiragana_to_romaji("しゃ"), "sha");
+        assert_eq!(hiragana_to_romaji("ちゅ"), "chu");
+        assert_eq!(hiragana_to_romaji("にょ"), "nyo");
+    }
+
+    #[test]
+    fn test_reverse_romaji_nn() {
+        assert_eq!(hiragana_to_romaji("ん"), "nn");
+        assert_eq!(hiragana_to_romaji("にほんご"), "nihonngo");
+    }
+
+    #[test]
+    fn test_reverse_romaji_sokuon() {
+        assert_eq!(hiragana_to_romaji("っ"), "xtu");
+    }
+
+    #[test]
+    fn test_reverse_romaji_punctuation() {
+        assert_eq!(hiragana_to_romaji("、"), ",");
+        assert_eq!(hiragana_to_romaji("。"), ".");
+        assert_eq!(hiragana_to_romaji("ー"), "-");
+    }
+
+    #[test]
+    fn test_reverse_romaji_passthrough() {
+        // Non-kana characters pass through unchanged
+        assert_eq!(hiragana_to_romaji("abc"), "abc");
+        assert_eq!(hiragana_to_romaji("あbc"), "abc");
+    }
+
+    #[test]
+    fn test_karukan_key_from_u32_new_keys() {
+        assert_eq!(KarukanKey::from_u32(10), Some(KarukanKey::ConvertHiragana));
+        assert_eq!(KarukanKey::from_u32(11), Some(KarukanKey::ConvertKatakana));
+        assert_eq!(KarukanKey::from_u32(12), Some(KarukanKey::ConvertAscii));
     }
 }
