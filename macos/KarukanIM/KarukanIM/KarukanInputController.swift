@@ -227,6 +227,16 @@ final class KarukanInputController: IMKInputController {
             return true
         }
 
+        // Option+/: 全角スラッシュ（44 = kVK_ANSI_Slash）
+        if event.keyCode == 44, flags == [.option] {
+            if karukan_is_empty(session) == 0 {
+                forceCommit(client: sender)
+            }
+            let c = sender as AnyObject
+            c.insertText?("／", replacementRange: NSRange(location: NSNotFound, length: 0))
+            return true
+        }
+
         if flags.contains(.command) || flags.contains(.option) || flags.contains(.control) {
             return false
         }
@@ -269,6 +279,17 @@ final class KarukanInputController: IMKInputController {
 
         updateClientState(client: sender)
         updateCandidatesPanel(sender: sender)
+
+        // Rust が消費しなかった記号を全角に変換して挿入
+        if !consumed, let fullWidth = Self.fullWidthMap[chars] {
+            if karukan_is_empty(session) == 0 {
+                forceCommit(client: sender)
+            }
+            let c = sender as AnyObject
+            c.insertText?(fullWidth, replacementRange: NSRange(location: NSNotFound, length: 0))
+            return true
+        }
+
         // 文字入力後にライブ変換をトリガー（Composing 状態でなければ内部で無視される）
         if consumed && isLiveConversionEnabled {
             triggerLiveConversion(sender: sender)
@@ -593,6 +614,26 @@ final class KarukanInputController: IMKInputController {
         }
         return nil
     }
+
+    /// ASCII 記号 → 全角記号のマッピング。
+    /// Rust（romaji converter）が消費しなかった記号に適用する。
+    private static let fullWidthMap: [String: String] = [
+        "!": "！", "?": "？",
+        "/": "・", "\\": "＼",
+        "(": "（", ")": "）",
+        "[": "「", "]": "」",
+        "{": "｛", "}": "｝",
+        "<": "＜", ">": "＞",
+        "~": "〜", "@": "＠",
+        "#": "＃", "$": "＄",
+        "%": "％", "^": "＾",
+        "&": "＆", "*": "＊",
+        "+": "＋", "=": "＝",
+        "|": "｜", "_": "＿",
+        ":": "：", ";": "；",
+        "`": "｀",
+        "'": "'", "\"": "\u{201D}",
+    ]
 
     private func forceCommit(client: Any?) {
         guard let session else { return }
