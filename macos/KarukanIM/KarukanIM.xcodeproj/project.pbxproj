@@ -50,6 +50,16 @@
 			name = "Embed App Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		54D0A00B2F530000003263AA /* Embed KarukanPreferences */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 7;
+			files = (
+			);
+			name = "Embed KarukanPreferences";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
@@ -105,6 +115,11 @@
 			path = KarukanIMExtension;
 			sourceTree = "<group>";
 		};
+		54D0A0062F530000003263AA /* KarukanPreferences */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = KarukanPreferences;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -156,6 +171,7 @@
 				5490CA742F4ECC0500990600 /* KarukanIMTests */,
 				5490CA7E2F4ECC0500990600 /* KarukanIMUITests */,
 				5490CA932F4ECF7D00990600 /* KarukanIMExtension */,
+				54D0A0062F530000003263AA /* KarukanPreferences */,
 				5436F6062F4F2000003263AA /* SettingStore.swift */,
 				5436F5ED2F4EDCC5003263AA /* Frameworks */,
 				5490CA652F4ECC0200990600 /* Products */,
@@ -185,6 +201,7 @@
 				5490CA612F4ECC0200990600 /* Frameworks */,
 				5490CA622F4ECC0200990600 /* Resources */,
 				5490CA9E2F4ECF7D00990600 /* Embed App Extensions */,
+				54D0A00B2F530000003263AA /* Embed KarukanPreferences */,
 				5436F6032F4F0000003263AA /* Install to Input Methods */,
 			);
 			buildRules = (
@@ -277,6 +294,9 @@
 		5490CA5C2F4ECC0200990600 /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
+				54D0A0022F530000003263AA = {
+					CreatedOnToolsVersion = 26.3;
+				};
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2630;
 				LastUpgradeCheck = 2630;

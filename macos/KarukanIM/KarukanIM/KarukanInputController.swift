@@ -755,10 +755,10 @@ final class KarukanInputController: IMKInputController {
     }
 
     @objc func openPreferences(_ sender: Any) {
-        // macOS 15+: キーボード設定に直接遷移
-        if let url = URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension") {
-            NSWorkspace.shared.open(url)
-        }
+        // KarukanIM.app/Contents/Resources/KarukanPreferences.app を起動
+        guard let resourceURL = Bundle.main.resourceURL else { return }
+        let prefsURL = resourceURL.appendingPathComponent("KarukanPreferences.app")
+        NSWorkspace.shared.openApplication(at: prefsURL, configuration: NSWorkspace.OpenConfiguration())
     }
 }
 
