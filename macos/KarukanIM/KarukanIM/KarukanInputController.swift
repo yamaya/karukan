@@ -123,6 +123,13 @@ final class KarukanInputController: IMKInputController {
 
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
         currentSender = sender
+
+        // JIS かな (104) / 英数 (102): keyDown・flagsChanged・keyUp すべて消費する。
+        // 候補パネル・initialized ガードより前で処理しないとアプリに漏れて空白が挿入される。
+        if event.keyCode == 104 || event.keyCode == 102 {
+            return true
+        }
+
         // 候補パネル表示中はキーイベントをパネルに委譲する。
         // interpretKeyEvents は Up/Down しか動かないため、Space/Tab は moveDown/Up で代替する。
         if let panel = candidatesPanel, panel.isVisible(), event.type == .keyDown {
@@ -177,6 +184,7 @@ final class KarukanInputController: IMKInputController {
         }
 
         guard initialized, let session else { return false }
+
         guard event.type == .keyDown else { return false }
 
         // 子音遅延タイマーをキャンセル（次のキーが来たので即座に最新状態へ更新）
@@ -218,12 +226,6 @@ final class KarukanInputController: IMKInputController {
             _ = karukan_push_key(session, KarukanMacOSKey.convertAscii.rawValue)
             updateClientState(client: sender)
             candidatesPanel?.hide()
-            return true
-        }
-
-        // JIS かな (104) / 英数 (102): IME で消費して何もしない。
-        // return false するとアプリ側に渡り空白等が挿入される。
-        if event.keyCode == 104 || event.keyCode == 102 {
             return true
         }
 
