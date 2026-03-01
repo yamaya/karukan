@@ -126,6 +126,23 @@ final class KarukanInputController: IMKInputController {
         // 候補パネル表示中はキーイベントをパネルに委譲する。
         // interpretKeyEvents は Up/Down しか動かないため、Space/Tab は moveDown/Up で代替する。
         if let panel = candidatesPanel, panel.isVisible(), event.type == .keyDown {
+            // Ctrl+J/K/;: パネル表示中でも変換確定を優先する
+            let panelFlags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if panelFlags == [.control], let session,
+               let key: KarukanMacOSKey = ({
+                   switch event.keyCode {
+                   case 38: return .convertHiragana
+                   case 40: return .convertKatakana
+                   case 41: return .convertAscii
+                   default: return nil
+                   }
+               })() {
+                _ = karukan_push_key(session, key.rawValue)
+                updateClientState(client: sender)
+                panel.hide()
+                return true
+            }
+
             switch event.keyCode {
             case 53: // Escape → 変換キャンセル（Rust に渡してひらがな preedit に戻す）
                 guard let session else { return true }
@@ -351,7 +368,10 @@ final class KarukanInputController: IMKInputController {
         logger.info("deactivateServer")
         consonantDelayTimer?.invalidate()
         consonantDelayTimer = nil
+        // バックグラウンドのライブ変換結果を無効化（deactivate 後のクライアント操作を防ぐ）
+        liveConversionGeneration &+= 1
         guard let session else {
+            currentSender = nil
             super.deactivateServer(sender)
             return
         }
@@ -360,6 +380,7 @@ final class KarukanInputController: IMKInputController {
             forceCommit(client: sender)
         }
         karukan_save_learning(session)
+        currentSender = nil
         super.deactivateServer(sender)
     }
 
@@ -512,11 +533,15 @@ final class KarukanInputController: IMKInputController {
 
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                // stale な結果は廃棄
+                // stale な結果は廃棄（deactivateServer でもインクリメントされる）
                 guard self.liveConversionGeneration == gen else {
                     logger.debug("live conversion discarded (stale gen=\(gen))")
                     return
                 }
+                // deactivate 後はクライアントが無効なので操作しない
+                let client = self.currentSender ?? self.client()
+                guard client != nil else { return }
+
                 logger.debug("apply_live_candidate: '\(autoCommitCandidate)' gen=\(gen)")
                 if karukan_apply_live_candidate(session, autoCommitCandidate) != 0 {
                     if hiragana.count > self.autoCommitMaxChars {
@@ -525,12 +550,12 @@ final class KarukanInputController: IMKInputController {
                         if !tailHiragana.isEmpty {
                             // 残余ひらがなを新規 Composing として注入し、ライブ変換を再トリガー
                             _ = karukan_set_composing_hiragana(session, tailHiragana)
-                            self.updateClientState(client: sender ?? self.client())
-                            self.triggerLiveConversion(sender: sender)
+                            self.updateClientState(client: client)
+                            self.triggerLiveConversion(sender: client)
                             return
                         }
                     }
-                    self.updateClientState(client: sender ?? self.client())
+                    self.updateClientState(client: client)
                 }
             }
         }

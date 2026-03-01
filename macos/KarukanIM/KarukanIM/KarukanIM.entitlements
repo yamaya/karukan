@@ -10,8 +10,8 @@
 	<!-- IMKServer が Mach IPC で接続するために必要 -->
 	<key>com.apple.security.temporary-exception.mach-register.global-name</key>
 	<string>com.example.inputmethod.KarukanIM_Connection</string>
-	<!-- Preference Pane の UserDefaults を読み取るために必要 -->
-	<key>com.apple.security.temporary-exception.shared-preference.read-only</key>
+	<!-- 入力メニューから設定を読み書きするために必要 -->
+	<key>com.apple.security.temporary-exception.shared-preference.read-write</key>
 	<array>
 		<string>com.example.inputmethod.KarukanIM</string>
 	</array>
