@@ -11,8 +11,6 @@
 		5436F6012F4EDD2F003263AA /* InputMethodKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 5436F5EE2F4EDCC5003263AA /* InputMethodKit.framework */; };
 		5436F6072F4F2000003263AA /* SettingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5436F6062F4F2000003263AA /* SettingStore.swift */; };
 		5490CA992F4ECF7D00990600 /* KarukanIMExtension.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 5490CA922F4ECF7D00990600 /* KarukanIMExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
-		54B1924D2F528666009A7DEC /* Preferences.prefPane in Resources */ = {isa = PBXBuildFile; fileRef = 54B1923B2F528640009A7DEC /* Preferences.prefPane */; };
-		54B1924F2F5286CA009A7DEC /* SettingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5436F6062F4F2000003263AA /* SettingStore.swift */; };
 		54B192522F52882B009A7DEC /* SettingStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5436F6062F4F2000003263AA /* SettingStore.swift */; };
 /* End PBXBuildFile section */
 
@@ -38,13 +36,6 @@
 			remoteGlobalIDString = 5490CA912F4ECF7D00990600;
 			remoteInfo = KarukanIMExtension;
 		};
-		54B192502F52877D009A7DEC /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 5490CA5C2F4ECC0200990600 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = 54B1923A2F528640009A7DEC;
-			remoteInfo = Preferences;
-		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -68,7 +59,6 @@
 		5490CA712F4ECC0500990600 /* KarukanIMTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KarukanIMTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		5490CA7B2F4ECC0500990600 /* KarukanIMUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = KarukanIMUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		5490CA922F4ECF7D00990600 /* KarukanIMExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = KarukanIMExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-		54B1923B2F528640009A7DEC /* Preferences.prefPane */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = Preferences.prefPane; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -85,13 +75,6 @@
 				Info.plist,
 			);
 			target = 5490CA912F4ECF7D00990600 /* KarukanIMExtension */;
-		};
-		54B192492F528640009A7DEC /* Exceptions for "Preferences" folder in "Preferences" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-			);
-			target = 54B1923A2F528640009A7DEC /* Preferences */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -120,14 +103,6 @@
 				5490CA9A2F4ECF7D00990600 /* Exceptions for "KarukanIMExtension" folder in "KarukanIMExtension" target */,
 			);
 			path = KarukanIMExtension;
-			sourceTree = "<group>";
-		};
-		54B1923C2F528640009A7DEC /* Preferences */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				54B192492F528640009A7DEC /* Exceptions for "Preferences" folder in "Preferences" target */,
-			);
-			path = Preferences;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -163,13 +138,6 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		54B192382F528640009A7DEC /* Frameworks */ = {
-			isa = PBXFrameworksBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -189,7 +157,6 @@
 				5490CA7E2F4ECC0500990600 /* KarukanIMUITests */,
 				5490CA932F4ECF7D00990600 /* KarukanIMExtension */,
 				5436F6062F4F2000003263AA /* SettingStore.swift */,
-				54B1923C2F528640009A7DEC /* Preferences */,
 				5436F5ED2F4EDCC5003263AA /* Frameworks */,
 				5490CA652F4ECC0200990600 /* Products */,
 			);
@@ -202,22 +169,11 @@
 				5490CA712F4ECC0500990600 /* KarukanIMTests.xctest */,
 				5490CA7B2F4ECC0500990600 /* KarukanIMUITests.xctest */,
 				5490CA922F4ECF7D00990600 /* KarukanIMExtension.appex */,
-				54B1923B2F528640009A7DEC /* Preferences.prefPane */,
 			);
 			name = Products;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
-
-/* Begin PBXHeadersBuildPhase section */
-		54B192362F528640009A7DEC /* Headers */ = {
-			isa = PBXHeadersBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXHeadersBuildPhase section */
 
 /* Begin PBXNativeTarget section */
 		5490CA632F4ECC0200990600 /* KarukanIM */ = {
@@ -234,7 +190,6 @@
 			buildRules = (
 			);
 			dependencies = (
-				54B192512F52877D009A7DEC /* PBXTargetDependency */,
 				5490CA982F4ECF7D00990600 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
@@ -316,29 +271,6 @@
 			productReference = 5490CA922F4ECF7D00990600 /* KarukanIMExtension.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
-		54B1923A2F528640009A7DEC /* Preferences */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 54B1924A2F528640009A7DEC /* Build configuration list for PBXNativeTarget "Preferences" */;
-			buildPhases = (
-				54B192362F528640009A7DEC /* Headers */,
-				54B192372F528640009A7DEC /* Sources */,
-				54B192382F528640009A7DEC /* Frameworks */,
-				54B192392F528640009A7DEC /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			fileSystemSynchronizedGroups = (
-				54B1923C2F528640009A7DEC /* Preferences */,
-			);
-			name = Preferences;
-			packageProductDependencies = (
-			);
-			productName = Preferences;
-			productReference = 54B1923B2F528640009A7DEC /* Preferences.prefPane */;
-			productType = "com.apple.product-type.bundle";
-		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -363,9 +295,6 @@
 					5490CA912F4ECF7D00990600 = {
 						CreatedOnToolsVersion = 26.3;
 					};
-					54B1923A2F528640009A7DEC = {
-						CreatedOnToolsVersion = 26.3;
-					};
 				};
 			};
 			buildConfigurationList = 5490CA5F2F4ECC0200990600 /* Build configuration list for PBXProject "KarukanIM" */;
@@ -387,7 +316,6 @@
 				5490CA702F4ECC0500990600 /* KarukanIMTests */,
 				5490CA7A2F4ECC0500990600 /* KarukanIMUITests */,
 				5490CA912F4ECF7D00990600 /* KarukanIMExtension */,
-				54B1923A2F528640009A7DEC /* Preferences */,
 			);
 		};
 /* End PBXProject section */
@@ -397,7 +325,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				54B1924D2F528666009A7DEC /* Preferences.prefPane in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -416,13 +343,6 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		5490CA902F4ECF7D00990600 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-		54B192392F528640009A7DEC /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -520,14 +440,6 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		54B192372F528640009A7DEC /* Sources */ = {
-			isa = PBXSourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				54B1924F2F5286CA009A7DEC /* SettingStore.swift in Sources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -545,11 +457,6 @@
 			isa = PBXTargetDependency;
 			target = 5490CA912F4ECF7D00990600 /* KarukanIMExtension */;
 			targetProxy = 5490CA972F4ECF7D00990600 /* PBXContainerItemProxy */;
-		};
-		54B192512F52877D009A7DEC /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = 54B1923A2F528640009A7DEC /* Preferences */;
-			targetProxy = 54B192502F52877D009A7DEC /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -902,56 +809,6 @@
 			};
 			name = Release;
 		};
-		54B192472F528640009A7DEC /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = CFSF629G3P;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = Preferences/Info.plist;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMainNibFile = Preferences;
-				INFOPLIST_KEY_NSPrincipalClass = Preferences;
-				INSTALL_PATH = "$(HOME)/Library/PreferencePanes";
-				LD_RUNPATH_SEARCH_PATHS = "@loader_path/../../../../Frameworks";
-				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.inputmethod.KarukanIM.Preferences.Preferences;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
-				WRAPPER_EXTENSION = prefPane;
-			};
-			name = Debug;
-		};
-		54B192482F528640009A7DEC /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				CODE_SIGN_STYLE = Automatic;
-				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = CFSF629G3P;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = Preferences/Info.plist;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSMainNibFile = Preferences;
-				INFOPLIST_KEY_NSPrincipalClass = Preferences;
-				INSTALL_PATH = "$(HOME)/Library/PreferencePanes";
-				LD_RUNPATH_SEARCH_PATHS = "@loader_path/../../../../Frameworks";
-				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.inputmethod.KarukanIM.Preferences.Preferences;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				STRING_CATALOG_GENERATE_SYMBOLS = YES;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
-				WRAPPER_EXTENSION = prefPane;
-			};
-			name = Release;
-		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -996,15 +853,6 @@
 			buildConfigurations = (
 				5490CA9C2F4ECF7D00990600 /* Debug */,
 				5490CA9D2F4ECF7D00990600 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		54B1924A2F528640009A7DEC /* Build configuration list for PBXNativeTarget "Preferences" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				54B192472F528640009A7DEC /* Debug */,
-				54B192482F528640009A7DEC /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -602,6 +602,49 @@ final class KarukanInputController: IMKInputController {
 
         menu.addItem(.separator())
 
+        // 子音遅延サブメニュー
+        let delayItem = NSMenuItem(title: "子音遅延", action: nil, keyEquivalent: "")
+        let delaySubmenu = NSMenu(title: "子音遅延")
+        let currentDelay = consonantDelaySec
+        for (label, value) in [
+            ("なし", 0.0),
+            ("0.05 秒", 0.05),
+            ("0.10 秒", 0.10),
+            ("0.15 秒", 0.15),
+            ("0.20 秒", 0.20),
+            ("0.30 秒", 0.30),
+        ] {
+            let item = NSMenuItem(
+                title: label,
+                action: #selector(setConsonantDelay(_:)),
+                keyEquivalent: ""
+            )
+            item.tag = Int(value * 1000) // ms を整数で格納
+            item.state = abs(currentDelay - value) < 0.001 ? .on : .off
+            delaySubmenu.addItem(item)
+        }
+        delayItem.submenu = delaySubmenu
+        menu.addItem(delayItem)
+
+        // 自動コミット閾値サブメニュー
+        let commitItem = NSMenuItem(title: "自動コミット閾値", action: nil, keyEquivalent: "")
+        let commitSubmenu = NSMenu(title: "自動コミット閾値")
+        let currentMax = autoCommitMaxChars
+        for chars in [10, 20, 30, 40, 50] {
+            let item = NSMenuItem(
+                title: "\(chars) 文字",
+                action: #selector(setAutoCommitMaxChars(_:)),
+                keyEquivalent: ""
+            )
+            item.tag = chars
+            item.state = currentMax == chars ? .on : .off
+            commitSubmenu.addItem(item)
+        }
+        commitItem.submenu = commitSubmenu
+        menu.addItem(commitItem)
+
+        menu.addItem(.separator())
+
         // 設定画面を開く
         let prefItem = NSMenuItem(
             title: "設定...",
@@ -620,6 +663,18 @@ final class KarukanInputController: IMKInputController {
             _ = karukan_push_key(session, KarukanMacOSKey.escape.rawValue)
             updateClientState(client: currentSender ?? client())
         }
+    }
+
+    @objc func setConsonantDelay(_ sender: NSMenuItem) {
+        let value = Double(sender.tag) / 1000.0
+        SettingStore.defaults.set(value, forKey: SettingStore.consonantDelaySecKey)
+        logger.info("consonant delay changed via menu: \(value)s")
+    }
+
+    @objc func setAutoCommitMaxChars(_ sender: NSMenuItem) {
+        let value = sender.tag
+        SettingStore.defaults.set(value, forKey: SettingStore.autoCommitMaxCharsKey)
+        logger.info("auto commit max chars changed via menu: \(value)")
     }
 
     @objc func openPreferences(_ sender: Any) {

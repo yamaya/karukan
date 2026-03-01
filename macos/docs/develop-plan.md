@@ -80,12 +80,15 @@ karukan/
 
 ## フェーズ概要
 
-| Phase | 内容 | ブランチ |
+| Phase | 内容 | 状態 |
 |---|---|---|
-| 1 | Rust FFI クレート (`karukan-macos`) | `feature/macos-phase1-ffi` |
-| 2 | InputMethodKit 最小実装（ローマ字→ひらがな） | `feature/macos-phase2-imk` |
-| 3 | 漢字変換 + 候補UI統合 | `feature/macos-phase3-candidates` |
-| 4 | Universal Binary・Hardened Runtime・公証・配布 | `feature/macos-phase4-distribution` |
+| 1 | Rust FFI クレート (`karukan-macos`) | ✅ 完了 |
+| 2 | InputMethodKit 最小実装（ローマ字→ひらがな） | ✅ 完了 |
+| 3 | 漢字変換 + 候補UI統合 | ✅ 完了 |
+| 4 | ライブ変換の洗練 | ✅ 完了 |
+| 5 | キーボードショートカット・インジケーターアイコン・設定基盤 | ✅ 完了（`develop-phase5.md`） |
+| 6 | 設定アプリ（SwiftUI 独立アプリ） | 📋 計画済み（`develop-phase6.md`） |
+| 7 | Universal Binary・公証・配布 | 未着手 |
 
 各フェーズ完了後に `epic/macos` へマージ。次フェーズへの go/nogo は開発者が判断する。
 
@@ -630,13 +633,12 @@ xcodebuild -exportArchive \
 ## 実装順序サマリー
 
 ```text
-feature/macos-phase1-ffi
-  └── karukan-macos クレート完成
-      └── go判断 → feature/macos-phase2-imk
-                    └── ローマ字→ひらがな on macOS 動作
-                        └── go判断 → feature/macos-phase3-candidates
-                                       └── 漢字変換+候補UI 動作
-                                           └── go判断 → feature/macos-phase4-distribution
-                                                          └── 公証・pkg 配布
-                                                              └── epic/macos へマージ
+Phase 1: Rust FFI (karukan-macos)                    ✅
+  └── Phase 2: IMKit 最小実装 (ローマ字→ひらがな)     ✅
+        └── Phase 3: 漢字変換 + 候補UI                ✅
+              └── Phase 4: ライブ変換の洗練            ✅
+                    └── Phase 5: ショートカット・アイコン・設定基盤  ✅
+                          └── Phase 6: 設定アプリ (SwiftUI)  📋 ← 現在
+                                └── Phase 7: 公証・pkg 配布
+                                      └── epic/macos → main マージ
 ```

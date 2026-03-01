@@ -687,9 +687,23 @@ T3: インジケーターアイコン
 
 ---
 
-## Phase 6 への引き継ぎ候補
+## Phase 6 への引き継ぎ
 
-1. **Preference Pane ターゲット作成** — `PreferencesController.swift` のコメントに手順記載済み。XIB UI 構築を含む
-2. **Universal Binary・公証・配布** — develop-plan.md の元 Phase 4 内容
-3. **設定項目の拡充** — キーバインドカスタマイズ、フォント設定等
-4. **「ん」の逆変換改善** — 後続文字による `n`/`nn` 切り替え（現在は `nn` 固定）
+### 設定画面: prefPane → SwiftUI 独立アプリに方針変更
+
+`.prefPane`（PreferencePanes.framework）による設定画面は、appex 内の Resources に配置しても
+システム環境設定で表示されなかった（macOS 標準 IM の prefPane と同一構造にしてもログすら出ず）。
+
+**Phase 6 では SwiftUI 独立アプリに切り替える。** 詳細は `develop-phase6.md` を参照。
+
+旧 Preferences ターゲット（prefPane）の残骸は Phase 6 で削除する:
+- `Preferences/` ディレクトリ（PreferencesController.swift, XIB, Info.plist, Preferences.h, Preferences.m）
+- pbxproj 内の Preferences ターゲット定義
+- KarukanIMExtension の Copy Preferences Pane ビルドフェーズ・Target Dependency
+
+### その他の引き継ぎ候補
+
+1. **Universal Binary・公証・配布** — develop-plan.md の元 Phase 4 内容
+2. **設定項目の拡充** — キーバインドカスタマイズ、フォント設定等
+3. **「ん」の逆変換改善** — 後続文字による `n`/`nn` 切り替え（現在は `nn` 固定）
+4. **アイコン画像の改善** — 現在の `Hiragana.tiff` を multi-resolution TIFF（1x 16x16 + 2x 32x32, sRGB, LZW）に作り直す
