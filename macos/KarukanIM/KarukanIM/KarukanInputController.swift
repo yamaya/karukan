@@ -262,7 +262,7 @@ final class KarukanInputController: IMKInputController {
         let consumed = chars.withCString { ptr in
             karukan_push_char(session, ptr) != 0
         }
-        logger.debug("push_char('\(chars)') consumed=\(consumed)")
+        logger.debug("push_char('\(chars, privacy: .public)') keyCode=\(event.keyCode) flags=\(event.modifierFlags.rawValue) consumed=\(consumed)")
 
         // 子音 pending なら preedit 更新を遅延してちらつきを防ぐ
         if consumed
@@ -446,7 +446,7 @@ final class KarukanInputController: IMKInputController {
         if karukan_has_commit(session) != 0 {
             let text = karukan_get_commit(session).map { String(cString: $0) } ?? ""
             if !text.isEmpty {
-                logger.debug("insertText: '\(text)'")
+                logger.debug("insertText: '\(text, privacy: .public)'")
                 c.insertText?(text, replacementRange: NSRange(location: NSNotFound, length: 0))
             }
         }
@@ -475,7 +475,7 @@ final class KarukanInputController: IMKInputController {
                 range: fullRange
             )
 
-            logger.debug("setMarkedText: '\(preeditText)' caret=\(cursorCharIndex)")
+            logger.debug("setMarkedText: '\(preeditText, privacy: .public)' caret=\(cursorCharIndex)")
             c.setMarkedText?(
                 attrStr,
                 selectionRange: NSRange(location: cursorCharIndex, length: 0),
@@ -506,6 +506,15 @@ final class KarukanInputController: IMKInputController {
         let len = karukan_get_composing_hiragana(session, &buf, buf.count)
         guard len > 0 else { return }
         let hiragana = String(cString: buf)
+
+        // ひらがな/カタカナが含まれない場合はライブ変換不要（記号のみ入力など）
+        let hasKana = hiragana.unicodeScalars.contains {
+            ($0.value >= 0x3041 && $0.value <= 0x3096) ||  // ひらがな
+            ($0.value >= 0x30A0 && $0.value <= 0x30FF) ||  // カタカナ
+            $0.value == 0x309D || $0.value == 0x309E ||    // ゝゞ
+            $0.value == 0x30FC                              // ー
+        }
+        guard hasKana else { return }
 
         // 世代をインクリメント（前の推論が完了しても世代が違えば適用されない）
         liveConversionGeneration &+= 1
