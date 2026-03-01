@@ -33,10 +33,10 @@
 	<dict>
 		<key>tsInputModeListKey</key>
 		<dict>
-			<key>com.example.inputmethod.karukan.hiragana</key>
+			<key>com.example.inputmethod.karukan.Japanese</key>
 			<dict>
 				<key>TISInputSourceID</key>
-				<string>com.example.inputmethod.karukan.hiragana</string>
+				<string>com.example.inputmethod.karukan.Japanese</string>
 				<key>TISIntendedLanguage</key>
 				<string>ja</string>
 				<key>TISInputSourceIsASCIICapable</key>
