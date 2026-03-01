@@ -107,6 +107,9 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
         // 入力メニューを一度だけ構築（target の weak 参照が切れないよう self が生きている間に固定）
         setupMenu()
 
+        // 起動時の設定値ログ（永続化確認用）
+        logger.info("settings on init — liveConversion=\(self.isLiveConversionEnabled) consonantDelay=\(self.consonantDelaySec)s autoCommitMax=\(self.autoCommitMaxChars)")
+
         // リソースロード（辞書・学習キャッシュ・モデル）
         // [self] strong capture: karukan_session_init 完了前に deinit/karukan_session_free が
         // 走るとフリーしたポインタにアクセスして落ちるため、init 完了まで self を生かし続ける。
@@ -705,11 +708,12 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
 
         menu.addItem(.separator())
 
-        // 子音遅延（フラット展開 — IMKInputController.menu() はサブメニューを無視するため）
+        // 子音遅延（フラット、インデント付き）
+        // NOTE: IMKInputController.menu() ではサブメニューは OS に無視されるため
+        //       ヘッダー行 + インデント付き選択肢のフラット構造で代替する。
         let delayHeader = NSMenuItem(title: "子音遅延", action: nil, keyEquivalent: "")
         delayHeader.isEnabled = false
         menu.addItem(delayHeader)
-
         for (label, value) in [
             ("なし", 0.0),
             ("0.05 秒", 0.05),
@@ -719,32 +723,31 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
             ("0.30 秒", 0.30),
         ] {
             let item = NSMenuItem(
-                title: label,
+                title: "  \(label)",
                 action: #selector(setConsonantDelay(_:)),
                 keyEquivalent: ""
             )
             item.target = self
+            item.tag = Int(value * 1000)
             item.indentationLevel = 1
-            item.tag = Int(value * 1000) // ms を整数で格納
             menu.addItem(item)
         }
 
         menu.addItem(.separator())
 
-        // 自動コミット閾値（フラット展開）
+        // 自動コミット閾値（フラット、インデント付き）
         let commitHeader = NSMenuItem(title: "自動コミット閾値", action: nil, keyEquivalent: "")
         commitHeader.isEnabled = false
         menu.addItem(commitHeader)
-
         for chars in [10, 20, 30, 40, 50] {
             let item = NSMenuItem(
-                title: "\(chars) 文字",
+                title: "  \(chars) 文字",
                 action: #selector(setAutoCommitMaxChars(_:)),
                 keyEquivalent: ""
             )
             item.target = self
-            item.indentationLevel = 1
             item.tag = chars
+            item.indentationLevel = 1
             menu.addItem(item)
         }
 
@@ -766,6 +769,7 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
     private func updateMenuCheckmarks() {
         let currentDelay = consonantDelaySec
         let currentMax = autoCommitMaxChars
+
         for item in appMenu.items {
             switch item.action {
             case #selector(toggleLiveConversion(_:)):
