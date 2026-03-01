@@ -1,10 +1,10 @@
-# Phase 5: 設定画面・キーボードショートカット・インジケーターアイコン
+# Phase 5: 設定・キーボードショートカット・インジケーターアイコン
 
 > 前提: Phase 4（ライブ変換の洗練）完了・動作確認済み
-> 完了条件: Preference Pane による設定 UI、標準キーボードショートカット、
+> 完了条件: 入力メニューによる設定 UI、標準キーボードショートカット、
 > カスタムインジケーターアイコンが動作すること
 >
-> **実装状況**: T2 ✅ / T3 ✅ / T1 部分完了（SettingStore + entitlements 済み、Preference Pane ターゲット作成は手動）
+> **実装状況**: T1 ✅ / T2 ✅ / T3 ✅
 
 ---
 
@@ -14,172 +14,72 @@ Phase 5 では IME としての完成度を日常利用レベルに引き上げ�
 
 | # | 項目 | 概要 |
 |---|---|---|
-| T1 | 設定画面（Preference Pane） | システム環境設定 > キーボード > Karukan の右ペインに設定 UI を表示 |
-| T2 | キーボードショートカット・入力メニュー | Ctrl+J/K/; + メニューバーのドロップダウンメニュー |
+| T1 | 設定（入力メニュー） | メニューバーの入力メニューからライブ変換・子音遅延・自動コミット閾値を変更 |
+| T2 | キーボードショートカット | Ctrl+J/K/; による変換確定、JIS かな/英数キーの消費 |
 | T3 | インジケーターアイコン | メニューバーのアイコンを「あ」等のカスタム画像に変更 |
 
 ---
 
-## T1: 設定画面（Preference Pane）
+## T1: 設定（入力メニュー）
 
 ### 背景
 
-現在の設定（ライブ変換 on/off）は `UserDefaults.standard` に直接保存しており、
-ユーザーが GUI で変更する手段がない。macOS 標準の入力メソッドはシステム環境設定 >
-キーボードの右ペインに設定画面を持つ。
+ユーザーが設定値を GUI で変更する手段として、当初 `.prefPane`（PreferencePanes.framework）を
+検討したが、appex ベースの IME ではシステム環境設定に表示されなかった。
+そこで入力メニュー（メニューバーのドロップダウン）にサブメニューとして設定項目を配置し、
+`UserDefaults(suiteName:)` で永続化する方式に切り替えた。
 
 ### 設計方針
 
-`PreferencePanes.framework` を使い、`.prefPane` バンドルとして設定画面を作成する。
-（参考: 「日本語入力を作るときに必要だった本」第8章）
-
-### バンドル構造
-
-```text
-KarukanIM.app/
-└── Contents/
-    ├── Frameworks/
-    │   └── libkarukan_macos.dylib
-    ├── Resources/
-    │   └── Preferences.prefPane/          ← 新規
-    │       └── Contents/
-    │           ├── MacOS/
-    │           │   └── Preferences
-    │           ├── Resources/
-    │           │   └── Preferences.xib    ← 設定画面 UI
-    │           └── Info.plist
-    ├── PlugIns/
-    │   └── KarukanIMExtension.appex/
-    └── Info.plist
-```
-
-### Xcode プロジェクト変更
-
-1. **新規ターゲット追加**: Preference Pane テンプレートで `Preferences` ターゲットを作成
-   - Product Name: `Preferences`
-   - Bundle Identifier: `com.example.inputmethod.KarukanIM.Preferences`
-   - Product: `Preferences.prefPane`
-
-2. **Target Dependencies**: `KarukanIM` ターゲットの Build Phases に `Preferences` を追加
-   （Preferences が先にビルドされる）
-
-3. **Copy Files Phase**: `KarukanIM` ターゲットに Copy Files Phase を追加
-   - Destination: `Resources`
-   - Files: `Preferences.prefPane`
-
-4. **Runpath Search Paths**: Preferences ターゲットの Build Settings で
-   `@loader_path/../../../../Frameworks` を追加（IME アプリの Frameworks を参照）
-
-5. **Swift 利用設定**: Preferences ターゲットで Swift を有効化
-   （テンプレートは Objective-C だが Swift で記述する）
+- `menu()` オーバーライドで `NSMenu` を構築し、設定項目をサブメニューで提供する
+- 設定値は `SettingStore`（`UserDefaults(suiteName:)`）に保存
+- IME 側は毎回 UserDefaults から読むため、設定変更は次のキー入力から即時反映
 
 ### 設定項目
 
-| 設定キー | 型 | デフォルト | UI 部品 | 説明 |
+| 設定キー | 型 | デフォルト | メニュー UI | 説明 |
 |---|---|---|---|---|
-| `karukanLiveConversionEnabled` | Bool | `true` | Toggle/Switch | ライブ変換の有効/無効 |
-| `karukanConsonantDelaySec` | Double | `0.1` | Slider (0.0-0.3) | 子音 pending 遅延秒数 |
-| `karukanAutoCommitMaxChars` | Int | `30` | Stepper (10-50) | 自動コミット閾値（文字数） |
+| `karukanLiveConversionEnabled` | Bool | `true` | チェックマーク付きトグル | ライブ変換の有効/無効 |
+| `karukanConsonantDelaySec` | Double | `0.1` | サブメニュー（なし/0.05/0.10/0.15/0.20/0.30 秒） | 子音 pending 遅延秒数 |
+| `karukanAutoCommitMaxChars` | Int | `30` | サブメニュー（10/20/30/40/50 文字） | 自動コミット閾値（文字数） |
 
-### 設定の共有（サンドボックス問題）
+### メニュー構造
 
-Preference Pane はサンドボックス**外**で実行される（システム環境設定のプロセス）。
-IME はサンドボックス**内**で実行される。そのため `UserDefaults.standard` を直接共有できない。
+```text
+┌─────────────────────────┐
+│ ✓ ライブ変換            │
+├─────────────────────────┤
+│   子音遅延          ▶   │──┐
+│   自動コミット閾値  ▶   │  │ ┌──────────────┐
+├─────────────────────────┤  └─│   なし        │
+│   設定...               │    │   0.05 秒     │
+└─────────────────────────┘    │ ✓ 0.10 秒     │
+                               │   0.15 秒     │
+                               │   0.20 秒     │
+                               │   0.30 秒     │
+                               └──────────────┘
+```
 
-#### 解決策: `UserDefaults(suiteName:)` + entitlements 例外
-
-**Preference Pane 側** — suite name を指定して書き込む:
+### 設定基盤: SettingStore + UserDefaults
 
 ```swift
-class SettingStore {
+enum SettingStore {
     static let suiteName = "com.example.inputmethod.KarukanIM"
-
     static var defaults: UserDefaults {
         UserDefaults(suiteName: suiteName) ?? .standard
     }
 }
 ```
 
-**IME 側（KarukanInputController）** — 同じ suite name で読み取る:
+IME 側は computed property で毎回 UserDefaults から読み取る:
 
 ```swift
-private var isLiveConversionEnabled: Bool {
-    get { SettingStore.defaults.bool(forKey: "karukanLiveConversionEnabled") }
-    set { SettingStore.defaults.set(newValue, forKey: "karukanLiveConversionEnabled") }
-}
-```
-
-**entitlements に例外を追加**（`KarukanIM.entitlements`）:
-
-```xml
-<!-- Preference Pane の UserDefaults を読み取るために必要 -->
-<key>com.apple.security.temporary-exception.shared-preference.read-only</key>
-<string>com.example.inputmethod.KarukanIM</string>
-```
-
-> **注意**: `register(defaults:)` はプロセスごとのメモリ上のデフォルト値のため、
-> Preference Pane と IME の両方で呼ぶ必要がある。
-
-### Preference Pane の Swift コード概要
-
-```swift
-import PreferencePanes
-
-class PreferencesController: NSPreferencePane {
-    @IBOutlet weak var liveConversionToggle: NSSwitch!
-    @IBOutlet weak var consonantDelaySlider: NSSlider!
-    @IBOutlet weak var autoCommitStepper: NSStepper!
-    @IBOutlet weak var autoCommitLabel: NSTextField!
-
-    override func mainViewDidLoad() {
-        let defaults = SettingStore.defaults
-        defaults.register(defaults: [
-            "karukanLiveConversionEnabled": true,
-            "karukanConsonantDelaySec": 0.1,
-            "karukanAutoCommitMaxChars": 30,
-        ])
-
-        liveConversionToggle.state = defaults.bool(forKey: "karukanLiveConversionEnabled") ? .on : .off
-        consonantDelaySlider.doubleValue = defaults.double(forKey: "karukanConsonantDelaySec")
-        autoCommitStepper.integerValue = defaults.integer(forKey: "karukanAutoCommitMaxChars")
-        updateAutoCommitLabel()
-    }
-
-    @IBAction func liveConversionChanged(_ sender: NSSwitch) {
-        SettingStore.defaults.set(sender.state == .on, forKey: "karukanLiveConversionEnabled")
-    }
-
-    @IBAction func consonantDelayChanged(_ sender: NSSlider) {
-        SettingStore.defaults.set(sender.doubleValue, forKey: "karukanConsonantDelaySec")
-    }
-
-    @IBAction func autoCommitChanged(_ sender: NSStepper) {
-        SettingStore.defaults.set(sender.integerValue, forKey: "karukanAutoCommitMaxChars")
-        updateAutoCommitLabel()
-    }
-
-    private func updateAutoCommitLabel() {
-        autoCommitLabel.stringValue = "\(autoCommitStepper.integerValue) 文字"
-    }
-}
-```
-
-### IME 側の変更
-
-現在ハードコードされている値を `UserDefaults` から読むように変更する:
-
-```swift
-// Before:
-private let consonantDelaySec: TimeInterval = 0.1
-private static let kLiveConversionMaxChars = 30
-
-// After:
 private var consonantDelaySec: TimeInterval {
-    let v = SettingStore.defaults.double(forKey: "karukanConsonantDelaySec")
-    return v > 0 ? v : 0.1  // 未設定時のフォールバック
+    let v = SettingStore.defaults.double(forKey: SettingStore.consonantDelaySecKey)
+    return v > 0 ? v : 0.1
 }
 private var autoCommitMaxChars: Int {
-    let v = SettingStore.defaults.integer(forKey: "karukanAutoCommitMaxChars")
+    let v = SettingStore.defaults.integer(forKey: SettingStore.autoCommitMaxCharsKey)
     return v > 0 ? v : 30
 }
 ```
@@ -187,12 +87,12 @@ private var autoCommitMaxChars: Int {
 ### テスト要件
 
 ```text
-[ ] システム環境設定 > キーボード > Karukan で設定画面が右ペインに表示される
-[ ] ライブ変換トグルを切り替えると UserDefaults に保存される
-[ ] IME 側で設定値が反映される（ライブ変換 off → ひらがなのみ表示）
-[ ] IME プロセス再起動後も設定が保持される
-[ ] 子音遅延スライダーの変更が即座に反映される
-[ ] 自動コミット閾値の変更が反映される
+[x] 入力メニューに「ライブ変換」「子音遅延」「自動コミット閾値」「設定...」が表示される
+[x] 「ライブ変換」クリックでチェックマークが切り替わり、動作が反映される
+[x] 「子音遅延」サブメニューで値を選択すると UserDefaults に保存され、現在値にチェックマーク
+[x] 「自動コミット閾値」サブメニューで値を選択すると UserDefaults に保存される
+[x] IME 側で設定値が即時反映される
+[x] IME プロセス再起動後も設定が保持される
 ```
 
 ---
@@ -559,51 +459,29 @@ Xcode の KarukanIMExtension ターゲットの Bundle Resources に `hiragana.p
 ## 実装順序
 
 ```text
-T2（ショートカット）→ T3（アイコン）→ T1（設定画面）
+T2（ショートカット）→ T3（アイコン）→ T1（設定メニュー）
 
-理由:
-- T2 は Rust + Swift の小規模変更で完結。依存が少なく最初に着手しやすい
+実施順序:
+- T2 は Rust + Swift の小規模変更で完結。依存が少なく最初に着手
 - T3 はアイコン作成 + Info.plist 変更のみ。コード変更が最小限
-- T1 は Xcode ターゲット追加・サンドボックス設定・UI 構築と最も規模が大きい。
-  T2/T3 で動作確認した上で最後に着手する
+- T1 は T2 の menu() 実装に設定サブメニューを追加する形で実装
 ```
 
 ---
 
 ## アーキテクチャ上の注意事項
 
-### Preference Pane と IME の通信
+### 設定の読み書きタイミング
 
-Preference Pane と IME は別プロセスで動作するため、設定変更の通知が必要。
-`UserDefaults` は書き込み即座に永続化されるが、IME 側が読み取るタイミングは
-次のキー入力時（`handle(_:client:)` が呼ばれたとき）。
+入力メニューから設定を変更すると `SettingStore.defaults`（UserDefaults suiteName）に
+即座に書き込まれる。IME 側は computed property で毎回 UserDefaults から読むため、
+次のキー入力時（`handle(_:client:)` が呼ばれたとき）に反映される。
+メニュー変更から反映までの遅延は < 数百ms で許容範囲。
 
-リアルタイム通知が必要な場合は `DistributedNotificationCenter` を使う:
+### JIS キーボード対応
 
-```swift
-// Preference Pane 側: 設定変更時に通知
-DistributedNotificationCenter.default().post(
-    name: Notification.Name("com.example.karukan.settingsChanged"),
-    object: nil
-)
-
-// IME 側: 通知を受けて設定を再読み込み
-DistributedNotificationCenter.default().addObserver(
-    self,
-    selector: #selector(reloadSettings),
-    name: Notification.Name("com.example.karukan.settingsChanged"),
-    object: nil
-)
-```
-
-> Phase 5 では `DistributedNotificationCenter` は必須ではない。
-> 設定変更後に次のキー入力で反映される遅延（< 数百ms）は許容範囲。
-> 将来的に即時反映が必要になった場合に導入する。
-
-### SettingStore の共通化
-
-`SettingStore` クラスは Preference Pane と IME の両方で使う。
-ファイルを共有するため、Xcode の Target Membership を両ターゲットに設定する。
+JIS かなキー (keyCode 104) / 英数キー (keyCode 102) は IME で消費（`return true`）する。
+`return false` するとアプリ側にキーイベントが漏れ、空白文字等が挿入される問題がある。
 
 ---
 
@@ -611,62 +489,68 @@ DistributedNotificationCenter.default().addObserver(
 
 | # | リスク | 深刻度 | 対処 |
 |---|---|---|---|
-| R1 | PreferencePanes.framework が deprecated になる可能性 | 中 | macOS 15 では動作確認済み。代替が出た場合は移行 |
-| R2 | サンドボックス例外 entitlements が App Store 審査で拒否される | 低 | 当面は Developer ID 署名で配布。App Store は Phase 6 以降で検討 |
-| R3 | Ctrl+J/K/; がアプリ側のショートカットと競合 | 中 | IME が先にキーイベントを受け取るため基本的に問題ないが、特定アプリで競合する場合は設定で無効化できるようにする（将来） |
-| R4 | テンプレートイメージのアイコンが一部の macOS テーマで見えにくい | 低 | Apple のガイドラインに従い黒色シルエットで作成。実機で確認 |
-| R5 | ひらがな→ローマ字逆変換で「ん」の扱いが不完全 | 低 | Phase 5 では `nn` 固定。後続文字による `n`/`nn` 切り替えは将来改善 |
+| R1 | Ctrl+J/K/; がアプリ側のショートカットと競合 | 中 | IME が先にキーイベントを受け取るため基本的に問題ないが、特定アプリで競合する場合は設定で無効化できるようにする（将来） |
+| R2 | テンプレートイメージのアイコンが一部の macOS テーマで見えにくい | 低 | Apple のガイドラインに従い黒色シルエットで作成。実機で確認 |
+| R3 | ひらがな→ローマ字逆変換で「ん」の扱いが不完全 | 低 | Phase 5 では `nn` 固定。後続文字による `n`/`nn` 切り替えは将来改善 |
 
 ---
 
 ## テスト要件まとめ
 
 ```text
-T1: 設定画面
-  [ ] Preference Pane がシステム環境設定に表示される
-  [ ] 設定値が UserDefaults(suiteName:) に保存される
-  [ ] IME 側で設定値が読み取れる
-  [ ] サンドボックス内から shared-preference が読める
+T1: 設定（入力メニュー）
+  [x] 入力メニューに「ライブ変換」「子音遅延」「自動コミット閾値」「設定...」が表示される
+  [x] 「ライブ変換」クリックでトグルが動作する
+  [x] 「子音遅延」サブメニューで値を変更できる
+  [x] 「自動コミット閾値」サブメニューで値を変更できる
+  [x] 設定値が UserDefaults(suiteName:) に保存・反映される
 
-T2: キーボードショートカット・入力メニュー
-  [ ] Ctrl+J でひらがな確定
-  [ ] Ctrl+K でカタカナ確定
-  [ ] Ctrl+; で半角英数確定
-  [ ] 候補パネル表示中でも動作する
-  [ ] 入力メニューに「ライブ変換」「設定...」が表示される
-  [ ] 「ライブ変換」メニューでトグルが動作する
+T2: キーボードショートカット
+  [x] Ctrl+J でひらがな確定
+  [x] Ctrl+K でカタカナ確定
+  [x] Ctrl+; で半角英数確定
+  [x] 候補パネル表示中でも動作する
+  [x] JIS かな/英数キーが消費される（アプリに漏れない）
 
 T3: インジケーターアイコン
-  [ ] メニューバーに「あ」アイコンが表示される
-  [ ] ダーク/ライトモード両対応
+  [x] メニューバーに「あ」アイコンが表示される
+  [x] ダーク/ライトモード両対応
 
 全体
-  [ ] cargo build -p karukan-macos がエラーなく成功する
-  [ ] Xcode ビルドが成功する（3 ターゲット: KarukanIM, KarukanIMExtension, Preferences）
-  [ ] 高速タイピング中にクラッシュしない
+  [x] cargo build -p karukan-macos がエラーなく成功する
+  [x] Xcode ビルドが成功する（2 ターゲット: KarukanIM, KarukanIMExtension）
+  [x] 高速タイピング中にクラッシュしない
 ```
 
 ---
 
 ## 完了条件（Acceptance Criteria）
 
-- [ ] システム環境設定 > キーボード > Karukan に設定画面が表示され、ライブ変換 on/off を切り替えられる
-- [ ] Ctrl+J でひらがな確定、Ctrl+K でカタカナ確定、Ctrl+; で半角英数確定が動作する
-- [ ] メニューバーに「あ」のカスタムアイコンが表示される
-- [ ] `cargo build -p karukan-macos --release` がエラーなく成功する
-- [ ] Xcode Archive ビルドが成功する
+- [x] 入力メニューからライブ変換・子音遅延・自動コミット閾値を変更できる
+- [x] Ctrl+J でひらがな確定、Ctrl+K でカタカナ確定、Ctrl+; で半角英数確定が動作する
+- [x] メニューバーに「あ」のカスタムアイコンが表示される
+- [x] `cargo build -p karukan-macos --release` がエラーなく成功する
+- [x] Xcode ビルドが成功する
 
 ---
 
 ## 実装済みファイル一覧
 
-### T2: キーボードショートカット・入力メニュー ✅
+### T1: 設定（入力メニュー） ✅
+
+| ファイル | 変更内容 |
+|---|---|
+| `KarukanIM/SettingStore.swift` | `UserDefaults(suiteName:)` 共有ストア（新規） |
+| `KarukanInputController.swift` | `SettingStore` 経由に移行、`menu()` に子音遅延・自動コミット閾値サブメニュー追加、`setConsonantDelay`/`setAutoCommitMaxChars` ハンドラ追加 |
+| `KarukanIM.entitlements` | `shared-preference.read-only` 追加 |
+
+### T2: キーボードショートカット ✅
 
 | ファイル | 変更内容 |
 |---|---|
 | `karukan-macos/src/session.rs` | `KarukanKey` に ConvertHiragana/Katakana/Ascii 追加、`do_convert_*` 3 メソッド、逆変換テーブル `REVERSE_ROMAJI`、テスト 16 件追加 |
 | `karukan-macos/include/karukan_macos.h` | `KARUKAN_KEY_CONVERT_HIRAGANA/KATAKANA/ASCII` 定数追加 |
-| `KarukanInputController.swift` | Ctrl+J/K/; ハンドラ、`menu()` オーバーライド、`toggleLiveConversion`/`openPreferences` |
+| `KarukanInputController.swift` | Ctrl+J/K/; ハンドラ、JIS かな/英数キー消費 |
 
 ### T3: インジケーターアイコン ✅
 
@@ -676,30 +560,15 @@ T3: インジケーターアイコン
 | `KarukanIMExtension/Info.plist` | `tsInputModeMenuIconFileKey` 追加 |
 | `KarukanIM/Info.plist` | `tsInputModeMenuIconFileKey` 追加 |
 
-### T1: 設定画面（基盤） ✅ / Xcode ターゲット作成 🔧手動
-
-| ファイル | 変更内容 |
-|---|---|
-| `KarukanIM/SettingStore.swift` | `UserDefaults(suiteName:)` 共有ストア（新規） |
-| `KarukanInputController.swift` | `SettingStore` 経由に移行（`consonantDelaySec`, `autoCommitMaxChars`, `isLiveConversionEnabled`） |
-| `KarukanIM.entitlements` | `shared-preference.read-only` 追加 |
-| `Preferences/PreferencesController.swift` | Preference Pane ソース（新規、ターゲット作成手順コメント付き） |
-
 ---
 
 ## Phase 6 への引き継ぎ
 
-### 設定画面: prefPane → SwiftUI 独立アプリに方針変更
+### SwiftUI 独立設定アプリ
 
-`.prefPane`（PreferencePanes.framework）による設定画面は、appex 内の Resources に配置しても
-システム環境設定で表示されなかった（macOS 標準 IM の prefPane と同一構造にしてもログすら出ず）。
-
-**Phase 6 では SwiftUI 独立アプリに切り替える。** 詳細は `develop-phase6.md` を参照。
-
-旧 Preferences ターゲット（prefPane）の残骸は Phase 6 で削除する:
-- `Preferences/` ディレクトリ（PreferencesController.swift, XIB, Info.plist, Preferences.h, Preferences.m）
-- pbxproj 内の Preferences ターゲット定義
-- KarukanIMExtension の Copy Preferences Pane ビルドフェーズ・Target Dependency
+入力メニューのサブメニューで基本的な設定変更は可能だが、
+将来の設定項目拡充（キーバインドカスタマイズ、フォント設定等）に備えて
+SwiftUI 独立アプリを検討する。詳細は `develop-phase6.md` を参照。
 
 ### その他の引き継ぎ候補
 
