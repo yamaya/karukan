@@ -101,11 +101,13 @@ final class KarukanInputController: IMKInputController {
         )
 
         // リソースロード（辞書・学習キャッシュ・モデル）
+        // [self] strong capture: karukan_session_init 完了前に deinit/karukan_session_free が
+        // 走るとフリーしたポインタにアクセスして落ちるため、init 完了まで self を生かし続ける。
         let capturedSession = ptr
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
             let ret = karukan_session_init(capturedSession)
             logger.info("karukan_session_init returned: \(ret)")
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
                 self?.initialized = true
             }
         }
@@ -393,12 +395,14 @@ final class KarukanInputController: IMKInputController {
         consonantDelayTimer = nil
         // バックグラウンドのライブ変換結果を無効化（deactivate 後のクライアント操作を防ぐ）
         liveConversionGeneration &+= 1
-        guard let session else {
-            currentSender = nil
+        candidatesPanel?.hide()
+        currentSender = nil
+        // karukan_session_init 未完了、またはセッション生成失敗の場合は session 関数に触らない。
+        // 未初期化の KarukanSession にアクセスするとバックグラウンドスレッドと競合してクラッシュする。
+        guard initialized, let session else {
             super.deactivateServer(sender)
             return
         }
-        candidatesPanel?.hide()
         // sessionFinished 経由だと sender が無効な場合があるため、
         // クライアント操作（insertText/setMarkedText）は行わず Rust 側の状態だけリセットする。
         if karukan_is_empty(session) == 0 {
@@ -406,7 +410,6 @@ final class KarukanInputController: IMKInputController {
             _ = karukan_has_commit(session)  // commit テキストを消費して捨てる
         }
         karukan_save_learning(session)
-        currentSender = nil
         super.deactivateServer(sender)
     }
 
