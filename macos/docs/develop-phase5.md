@@ -574,6 +574,6 @@ SwiftUI 独立アプリを検討する。詳細は `develop-phase6.md` を参照
 
 1. **Universal Binary・公証・配布** — develop-plan.md の元 Phase 4 内容
 2. **設定項目の拡充** — キーバインドカスタマイズ、フォント設定等
-3. **「ん」の逆変換改善** — 後続文字による `n`/`nn` 切り替え（現在は `nn` 固定）
+3. ~~**「ん」の逆変換改善**~~ — 実装済み。`RomajiConverter` (converter.rs L86-104) が `n` + 子音 → `ん` + 子音を自動処理する
 4. **アイコン画像の改善** — 現在の `Hiragana.tiff` を multi-resolution TIFF（1x 16x16 + 2x 32x32, sRGB, LZW）に作り直す
     - 黒抜きは醜いので白に近い色にする
