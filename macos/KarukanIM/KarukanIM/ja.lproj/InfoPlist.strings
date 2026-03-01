@@ -1,2 +1,3 @@
 /* 入力モード ID → メニューバー表示名 */
+CFBundleName = "Karukan";
 "com.example.inputmethod.karukan.Japanese" = "Karukan 日本語";
