@@ -204,6 +204,12 @@ final class KarukanInputController: IMKInputController {
             return true
         }
 
+        // JIS かな (104) / 英数 (102): IME で消費して何もしない。
+        // return false するとアプリ側に渡り空白等が挿入される。
+        if event.keyCode == 104 || event.keyCode == 102 {
+            return true
+        }
+
         if flags.contains(.command) || flags.contains(.option) || flags.contains(.control) {
             return false
         }
