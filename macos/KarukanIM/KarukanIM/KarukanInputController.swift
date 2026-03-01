@@ -16,7 +16,7 @@ private let logger = Logger(subsystem: "com.example.karukan", category: "InputCo
 /// IMKInputController の 1 インスタンスが 1 アプリケーションの
 /// 入力コンテキストに対応する。Rust 側の KarukanSession と 1:1 で紐付く。
 @objc(KarukanInputController)
-final class KarukanInputController: IMKInputController {
+final class KarukanInputController: IMKInputController, NSMenuItemValidation {
 
     // -----------------------------------------------------------------------
     // MARK: - Properties
@@ -59,8 +59,7 @@ final class KarukanInputController: IMKInputController {
 
     /// 子音 pending 遅延秒数（0 で無効＝従来動作）。SettingStore から読み取る。
     private var consonantDelaySec: TimeInterval {
-        let v = SettingStore.defaults.double(forKey: SettingStore.consonantDelaySecKey)
-        return v > 0 ? v : 0.1
+        SettingStore.defaults.double(forKey: SettingStore.consonantDelaySecKey)
     }
 
     /// 自動コミット閾値（文字数）。SettingStore から読み取る。
@@ -75,6 +74,11 @@ final class KarukanInputController: IMKInputController {
         get { SettingStore.defaults.bool(forKey: SettingStore.liveConversionEnabledKey) }
         set { SettingStore.defaults.set(newValue, forKey: SettingStore.liveConversionEnabledKey) }
     }
+
+    /// 入力メニュー（一度だけ構築して保持する）。
+    /// IMKInputController.menu() は呼ばれるたびに再構築すると target の weak 参照が
+    /// 切れるリスクがあるため、azooKey 方式でプロパティとして保持する。
+    private var appMenu: NSMenu!
 
     // -----------------------------------------------------------------------
     // MARK: - Lifecycle
@@ -99,6 +103,9 @@ final class KarukanInputController: IMKInputController {
             server: server,
             panelType: kIMKSingleColumnScrollingCandidatePanel
         )
+
+        // 入力メニューを一度だけ構築（target の weak 参照が切れないよう self が生きている間に固定）
+        setupMenu()
 
         // リソースロード（辞書・学習キャッシュ・モデル）
         // [self] strong capture: karukan_session_init 完了前に deinit/karukan_session_free が
@@ -677,8 +684,15 @@ final class KarukanInputController: IMKInputController {
     // MARK: - 入力メニュー（メニューバードロップダウン）
     // -----------------------------------------------------------------------
 
-    override func menu() -> NSMenu! {
+    /// メニューを一度だけ構築する（init から呼ぶ）。
+    /// IMKInputController.menu() のたびに再構築すると NSMenuItem.target (weak) が
+    /// 切れるリスクがあるため、azooKey 方式でプロパティに固定する。
+    private func setupMenu() {
         let menu = NSMenu(title: "Karukan")
+        // autoenablesItems = false: レスポンダーチェーンによる自動 enable/disable を無効にする。
+        // true（デフォルト）のままだとレスポンダーチェーンに self が含まれず
+        // setConsonantDelay: 等が見つからない場合にアイテムが自動的にグレーアウトされる。
+        menu.autoenablesItems = false
 
         // ライブ変換トグル
         let liveItem = NSMenuItem(
@@ -686,15 +700,16 @@ final class KarukanInputController: IMKInputController {
             action: #selector(toggleLiveConversion(_:)),
             keyEquivalent: ""
         )
-        liveItem.state = isLiveConversionEnabled ? .on : .off
+        liveItem.target = self
         menu.addItem(liveItem)
 
         menu.addItem(.separator())
 
-        // 子音遅延サブメニュー
-        let delayItem = NSMenuItem(title: "子音遅延", action: nil, keyEquivalent: "")
-        let delaySubmenu = NSMenu(title: "子音遅延")
-        let currentDelay = consonantDelaySec
+        // 子音遅延（フラット展開 — IMKInputController.menu() はサブメニューを無視するため）
+        let delayHeader = NSMenuItem(title: "子音遅延", action: nil, keyEquivalent: "")
+        delayHeader.isEnabled = false
+        menu.addItem(delayHeader)
+
         for (label, value) in [
             ("なし", 0.0),
             ("0.05 秒", 0.05),
@@ -708,29 +723,30 @@ final class KarukanInputController: IMKInputController {
                 action: #selector(setConsonantDelay(_:)),
                 keyEquivalent: ""
             )
+            item.target = self
+            item.indentationLevel = 1
             item.tag = Int(value * 1000) // ms を整数で格納
-            item.state = abs(currentDelay - value) < 0.001 ? .on : .off
-            delaySubmenu.addItem(item)
+            menu.addItem(item)
         }
-        delayItem.submenu = delaySubmenu
-        menu.addItem(delayItem)
 
-        // 自動コミット閾値サブメニュー
-        let commitItem = NSMenuItem(title: "自動コミット閾値", action: nil, keyEquivalent: "")
-        let commitSubmenu = NSMenu(title: "自動コミット閾値")
-        let currentMax = autoCommitMaxChars
+        menu.addItem(.separator())
+
+        // 自動コミット閾値（フラット展開）
+        let commitHeader = NSMenuItem(title: "自動コミット閾値", action: nil, keyEquivalent: "")
+        commitHeader.isEnabled = false
+        menu.addItem(commitHeader)
+
         for chars in [10, 20, 30, 40, 50] {
             let item = NSMenuItem(
                 title: "\(chars) 文字",
                 action: #selector(setAutoCommitMaxChars(_:)),
                 keyEquivalent: ""
             )
+            item.target = self
+            item.indentationLevel = 1
             item.tag = chars
-            item.state = currentMax == chars ? .on : .off
-            commitSubmenu.addItem(item)
+            menu.addItem(item)
         }
-        commitItem.submenu = commitSubmenu
-        menu.addItem(commitItem)
 
         menu.addItem(.separator())
 
@@ -740,9 +756,38 @@ final class KarukanInputController: IMKInputController {
             action: #selector(openPreferences(_:)),
             keyEquivalent: ""
         )
+        prefItem.target = self
         menu.addItem(prefItem)
 
-        return menu
+        appMenu = menu
+    }
+
+    /// メニュー表示直前にチェックマークを最新状態に更新する。
+    private func updateMenuCheckmarks() {
+        let currentDelay = consonantDelaySec
+        let currentMax = autoCommitMaxChars
+        for item in appMenu.items {
+            switch item.action {
+            case #selector(toggleLiveConversion(_:)):
+                item.state = isLiveConversionEnabled ? .on : .off
+            case #selector(setConsonantDelay(_:)):
+                let v = Double(item.tag) / 1000.0
+                item.state = abs(currentDelay - v) < 0.001 ? .on : .off
+            case #selector(setAutoCommitMaxChars(_:)):
+                item.state = currentMax == item.tag ? .on : .off
+            default:
+                break
+            }
+        }
+    }
+
+    override func menu() -> NSMenu! {
+        updateMenuCheckmarks()
+        return appMenu
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        return true
     }
 
     @objc func toggleLiveConversion(_ sender: Any) {
@@ -754,16 +799,35 @@ final class KarukanInputController: IMKInputController {
         }
     }
 
-    @objc func setConsonantDelay(_ sender: NSMenuItem) {
-        let value = Double(sender.tag) / 1000.0
+    @objc func setConsonantDelay(_ sender: Any) {
+        guard let item = Self.menuItem(from: sender) else {
+            logger.error("setConsonantDelay: cannot extract NSMenuItem from \(type(of: sender))")
+            return
+        }
+        let value = Double(item.tag) / 1000.0
         SettingStore.defaults.set(value, forKey: SettingStore.consonantDelaySecKey)
         logger.info("consonant delay changed via menu: \(value)s")
     }
 
-    @objc func setAutoCommitMaxChars(_ sender: NSMenuItem) {
-        let value = sender.tag
+    @objc func setAutoCommitMaxChars(_ sender: Any) {
+        guard let item = Self.menuItem(from: sender) else {
+            logger.error("setAutoCommitMaxChars: cannot extract NSMenuItem from \(type(of: sender))")
+            return
+        }
+        let value = item.tag
         SettingStore.defaults.set(value, forKey: SettingStore.autoCommitMaxCharsKey)
         logger.info("auto commit max chars changed via menu: \(value)")
+    }
+
+    /// IMKit はメニューアクションの sender を NSMenuItem ではなく
+    /// コマンド辞書（NSDictionary）として渡す。
+    /// kIMKCommandMenuItemName キーから NSMenuItem を取り出すか、
+    /// sender が直接 NSMenuItem の場合はそのまま返す。
+    private static func menuItem(from sender: Any) -> NSMenuItem? {
+        if let item = sender as? NSMenuItem { return item }
+        if let dict = sender as? NSDictionary,
+           let item = dict[kIMKCommandMenuItemName] as? NSMenuItem { return item }
+        return nil
     }
 
     @objc func openPreferences(_ sender: Any) {

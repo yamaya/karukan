@@ -12,9 +12,9 @@ enum SettingStore {
     static let suiteName = "com.example.inputmethod.KarukanIM"
 
     /// 共有 UserDefaults。suite が利用できない場合は .standard にフォールバック。
-    static var defaults: UserDefaults {
-        UserDefaults(suiteName: suiteName) ?? .standard
-    }
+    /// computed property にするとアクセスのたびに新規インスタンスが生成され
+    /// register(defaults:) が引き継がれないため、static let でシングルトンにする。
+    static let defaults: UserDefaults = UserDefaults(suiteName: suiteName) ?? .standard
 
     // MARK: - Keys
 
@@ -27,7 +27,7 @@ enum SettingStore {
     static func registerDefaults() {
         defaults.register(defaults: [
             liveConversionEnabledKey: true,
-            consonantDelaySecKey: 0.1,
+            consonantDelaySecKey: 0.0,
             autoCommitMaxCharsKey: 30,
         ])
     }

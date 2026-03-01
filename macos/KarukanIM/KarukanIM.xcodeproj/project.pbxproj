@@ -115,11 +115,6 @@
 			path = KarukanIMExtension;
 			sourceTree = "<group>";
 		};
-		54D0A0062F530000003263AA /* KarukanPreferences */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			path = KarukanPreferences;
-			sourceTree = "<group>";
-		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -171,7 +166,6 @@
 				5490CA742F4ECC0500990600 /* KarukanIMTests */,
 				5490CA7E2F4ECC0500990600 /* KarukanIMUITests */,
 				5490CA932F4ECF7D00990600 /* KarukanIMExtension */,
-				54D0A0062F530000003263AA /* KarukanPreferences */,
 				5436F6062F4F2000003263AA /* SettingStore.swift */,
 				5436F5ED2F4EDCC5003263AA /* Frameworks */,
 				5490CA652F4ECC0200990600 /* Products */,

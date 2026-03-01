@@ -1,7 +1,9 @@
 [tasks.install]
 run = '''
+killall KarukanIM || true
+sleep 1
 xcodebuild -scheme KarukanIM -configuration Release build | xcpretty
-killall KarukanIM; sleep 1; open "$HOME/Library/Input Methods/KarukanIM.app"
+open -a ~/Library/Input\ Methods/KarukanIM.app || true
 '''
 
 [tasks.clean]
