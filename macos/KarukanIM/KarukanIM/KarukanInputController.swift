@@ -399,8 +399,11 @@ final class KarukanInputController: IMKInputController {
             return
         }
         candidatesPanel?.hide()
+        // sessionFinished 経由だと sender が無効な場合があるため、
+        // クライアント操作（insertText/setMarkedText）は行わず Rust 側の状態だけリセットする。
         if karukan_is_empty(session) == 0 {
-            forceCommit(client: sender)
+            _ = karukan_push_key(session, KarukanMacOSKey.returnKey.rawValue)
+            _ = karukan_has_commit(session)  // commit テキストを消費して捨てる
         }
         karukan_save_learning(session)
         currentSender = nil
