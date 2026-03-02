@@ -596,7 +596,7 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
                 guard client != nil else { return }
 
                 logger.debug("apply_live_candidate: '\(autoCommitCandidate)' gen=\(gen)")
-                if karukan_apply_live_candidate(session, autoCommitCandidate) != 0 {
+                if karukan_apply_live_candidate(session, autoCommitCandidate, hiragana) != 0 {
                     if hiragana.count > self.autoCommitMaxChars {
                         // 変換済みテキストをコミット（live_candidate が Some(漢字) の状態で Return）
                         _ = karukan_push_key(session, KarukanMacOSKey.returnKey.rawValue)

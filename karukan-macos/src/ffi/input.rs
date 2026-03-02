@@ -124,6 +124,7 @@ pub extern "C" fn karukan_set_composing_hiragana(
 pub extern "C" fn karukan_apply_live_candidate(
     session: *mut KarukanSession,
     candidate_utf8: *const c_char,
+    source_hiragana_utf8: *const c_char,
 ) -> c_int {
     std::panic::catch_unwind(AssertUnwindSafe(|| {
         let s = ffi_mut!(session, 0);
@@ -134,7 +135,15 @@ pub extern "C" fn karukan_apply_live_candidate(
             Ok(s) => s,
             Err(_) => return 0,
         };
-        s.apply_live_candidate(candidate);
+        let source = if source_hiragana_utf8.is_null() {
+            ""
+        } else {
+            match unsafe { std::ffi::CStr::from_ptr(source_hiragana_utf8) }.to_str() {
+                Ok(s) => s,
+                Err(_) => return 0,
+            }
+        };
+        s.apply_live_candidate(candidate, source);
         if s.preedit.dirty { 1 } else { 0 }
     }))
     .unwrap_or(0)

@@ -276,11 +276,15 @@ void karukan_free_string(char* ptr);
  * Composing 状態でなければ無視する。preedit を変換済みテキストに更新し dirty にする。
  * メインスレッドからのみ呼ぶこと。
  *
- * 戻り値: 1=適用成功, 0=Composing 状態でなく無視した
+ * source_hiragana_utf8: 推論開始時の composing hiragana（karukan_get_composing_hiragana の戻り値）。
+ * 現在の input_buf と異なる場合は stale として無視する（なでし→なでしこ 途中コミットバグ対策）。
+ *
+ * 戻り値: 1=適用成功, 0=Composing 状態でないか source が stale で無視した
  */
 int karukan_apply_live_candidate(
     KarukanSession* session,
-    const char* candidate_utf8);
+    const char* candidate_utf8,
+    const char* source_hiragana_utf8);
 
 /**
  * 長文コミット後の残余ひらがなを Composing 状態として注入する。

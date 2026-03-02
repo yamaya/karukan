@@ -220,9 +220,13 @@ pub struct KarukanSession {
     /// Live conversion result (karukan-im の `live.text` に相当).
     ///
     /// Some(_) のとき preedit に変換済みテキストを表示し、Enter で確定する。
-    /// push_char のたびに None にリセットされ、バックグラウンド推論完了後に
-    /// apply_live_candidate() で再セットされる。
+    /// apply_live_candidate() でセットされ、do_commit/do_cancel/do_backspace 等でクリアされる。
     live_candidate: Option<String>,
+    /// live_candidate を生成したときの input_buf.text（= 推論時の composing hiragana）。
+    /// do_commit 時に input_buf.text と照合し、一致しない場合は live_candidate を stale として無視する。
+    /// これにより "なでし" 推論結果が適用された後に 'o' を追加して "なでしこ" になっても、
+    /// Return で "なでし" がコミットされるバグを防ぐ。
+    live_candidate_source: String,
     /// Preedit state exposed to FFI.
     pub(crate) preedit: PreeditCache,
     /// Commit state exposed to FFI.
@@ -246,6 +250,7 @@ impl KarukanSession {
             learning: None,
             converter: None,
             live_candidate: None,
+            live_candidate_source: String::new(),
             preedit: PreeditCache::default(),
             commit: CommitCache::default(),
             candidate_cache: CandidateCache::default(),
@@ -377,15 +382,25 @@ impl KarukanSession {
     /// live_candidate をセットして preedit を変換済みテキストに更新する。
     /// Composing 状態でなければ無視する（stale な結果が Conversion 中に届いた場合など）。
     ///
+    /// `source` は推論を開始した時点の `input_buf.text`（= karukan_get_composing_hiragana の戻り値）。
+    /// 現在の `input_buf.text` と一致しない場合は stale な結果として無視する。
+    /// これにより、'k' 押下時（composing="なでし"）に開始した推論が 'o' 入力後（composing="なでしこ"）
+    /// に完了しても誤って "なでし" 変換結果が適用されるバグを防ぐ。
+    ///
     /// 新しいライブ変換サイクルの開始を意味するため、clear_flags() で前サイクルの
     /// dirty フラグ（特に commit.dirty）をクリアする。これにより、文節分割コミット後の
     /// 残余ひらがなの推論完了時に前のコミットテキストが重複送信されるバグを防ぐ。
-    pub fn apply_live_candidate(&mut self, candidate: &str) {
+    pub fn apply_live_candidate(&mut self, candidate: &str, source: &str) {
         if !matches!(self.state, SessionState::Composing) {
+            return;
+        }
+        // source が現在の input_buf.text と異なる場合は stale — 無視する。
+        if source != self.input_buf.text {
             return;
         }
         self.clear_flags();
         self.live_candidate = Some(candidate.to_string());
+        self.live_candidate_source = source.to_string();
         // preedit = 変換済みテキスト + 未確定ローマ字バッファ
         // 例: candidate="日本語", romaji.buffer()="h" → preedit="日本語h"
         // karukan-im の set_composing_state() が live.text + romaji buffer を合成するのと同じ。
@@ -613,12 +628,18 @@ impl KarukanSession {
         }
 
         let committed = if let Some(live) = self.live_candidate.take() {
-            // ライブ変換結果をコミット（karukan-im: commit_composing の live.text 分岐）
-            let hiragana = self.input_buf.text.clone();
-            if let Some(cache) = &mut self.learning {
-                cache.record(&hiragana, &live);
+            // live_candidate_source が現在の input_buf.text と一致する場合のみ採用。
+            // 'k' 押下時（composing="なでし"）に生成された live_candidate が
+            // 'o' 入力後（composing="なでしこ"）にコミットされるバグを防ぐ。
+            if self.live_candidate_source == self.input_buf.text {
+                let hiragana = self.input_buf.text.clone();
+                if let Some(cache) = &mut self.learning {
+                    cache.record(&hiragana, &live);
+                }
+                live
+            } else {
+                std::mem::take(&mut self.input_buf.text)
             }
-            live
         } else {
             std::mem::take(&mut self.input_buf.text)
         };
