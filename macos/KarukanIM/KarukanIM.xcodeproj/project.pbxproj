@@ -808,7 +808,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				OTHER_LDFLAGS = (
-					"-L$(SRCROOT)/../../target/debug",
+					"-L$(SRCROOT)/../../target/release",
 					"-lkarukan_macos",
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.example.inputmethod.KarukanIM.KarukanIMExtension;

@@ -3,6 +3,7 @@ run = '''
 killall KarukanIM || true
 sleep 1
 xcodebuild -scheme KarukanIM -configuration Release build | xcpretty
+sleep 2
 open -a ~/Library/Input\ Methods/KarukanIM.app || true
 '''
 
