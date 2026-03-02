@@ -80,6 +80,10 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
     /// 切れるリスクがあるため、azooKey 方式でプロパティとして保持する。
     private var appMenu: NSMenu!
 
+    /// preedit が存在するか（Composing / Conversion 状態）。
+    /// validateMenuItem で変換ショートカット項目のグレーアウト制御に使う。
+    private var isComposing = false
+
     // -----------------------------------------------------------------------
     // MARK: - Lifecycle
     // -----------------------------------------------------------------------
@@ -463,6 +467,7 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
 
         let preeditText = karukan_get_preedit(session).map { String(cString: $0) } ?? ""
         let caretBytes  = Int(karukan_get_preedit_caret(session))
+        isComposing = !preeditText.isEmpty
 
         if preeditText.isEmpty {
             c.setMarkedText?(
@@ -708,6 +713,36 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
 
         menu.addItem(.separator())
 
+        // 変換ショートカット（preedit がないときはグレーアウト）
+        let hiraganaItem = NSMenuItem(
+            title: "ひらがなに変換",
+            action: #selector(menuConvertHiragana(_:)),
+            keyEquivalent: "j"
+        )
+        hiraganaItem.keyEquivalentModifierMask = .control
+        hiraganaItem.target = self
+        menu.addItem(hiraganaItem)
+
+        let katakanaItem = NSMenuItem(
+            title: "カタカナに変換",
+            action: #selector(menuConvertKatakana(_:)),
+            keyEquivalent: "k"
+        )
+        katakanaItem.keyEquivalentModifierMask = .control
+        katakanaItem.target = self
+        menu.addItem(katakanaItem)
+
+        let asciiItem = NSMenuItem(
+            title: "英字に変換",
+            action: #selector(menuConvertAscii(_:)),
+            keyEquivalent: ";"
+        )
+        asciiItem.keyEquivalentModifierMask = .control
+        asciiItem.target = self
+        menu.addItem(asciiItem)
+
+        menu.addItem(.separator())
+
         // 子音遅延（フラット、インデント付き）
         // NOTE: IMKInputController.menu() ではサブメニューは OS に無視されるため
         //       ヘッダー行 + インデント付き選択肢のフラット構造で代替する。
@@ -791,7 +826,35 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
     }
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        return true
+        switch menuItem.action {
+        case #selector(menuConvertHiragana(_:)),
+             #selector(menuConvertKatakana(_:)),
+             #selector(menuConvertAscii(_:)):
+            return isComposing
+        default:
+            return true
+        }
+    }
+
+    @objc func menuConvertHiragana(_ sender: Any) {
+        guard let session else { return }
+        _ = karukan_push_key(session, KarukanMacOSKey.convertHiragana.rawValue)
+        updateClientState(client: currentSender ?? client())
+        candidatesPanel?.hide()
+    }
+
+    @objc func menuConvertKatakana(_ sender: Any) {
+        guard let session else { return }
+        _ = karukan_push_key(session, KarukanMacOSKey.convertKatakana.rawValue)
+        updateClientState(client: currentSender ?? client())
+        candidatesPanel?.hide()
+    }
+
+    @objc func menuConvertAscii(_ sender: Any) {
+        guard let session else { return }
+        _ = karukan_push_key(session, KarukanMacOSKey.convertAscii.rawValue)
+        updateClientState(client: currentSender ?? client())
+        candidatesPanel?.hide()
     }
 
     @objc func toggleLiveConversion(_ sender: Any) {
