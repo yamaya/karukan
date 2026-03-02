@@ -226,6 +226,12 @@ pub extern "C" fn karukan_convert_top1(
             Ok(s) => s,
             Err(_) => return std::ptr::null_mut(),
         };
+        // ローマ字パススルーで input_buf に ASCII 文字が混入した場合（例: "えぷb"）、
+        // モデルに渡すと byte-level BPE デコードの副作用で制御文字が生成されることがある。
+        // ASCII を含む入力は変換せず null を返す。
+        if hiragana.chars().any(|c| c.is_ascii()) {
+            return std::ptr::null_mut();
+        }
         match conv.convert(hiragana, "", 1) {
             Ok(candidates) if !candidates.is_empty() => {
                 std::ffi::CString::new(candidates[0].as_str())

@@ -65,7 +65,10 @@ pub fn clean_model_output(text: &str) -> String {
         result.push(ch);
     }
 
-    result.trim().to_string()
+    // Strip control characters that may appear due to byte-level BPE decoding
+    // artefacts when the model receives non-hiragana input (e.g. romaji pass-through).
+    let trimmed = result.trim();
+    trimmed.chars().filter(|c| !c.is_control()).collect()
 }
 
 /// Returns true for hiragana characters (including long vowel mark ー).
@@ -243,6 +246,15 @@ mod tests {
     fn test_clean_model_output_plain_text() {
         assert_eq!(clean_model_output("日本語"), "日本語");
         assert_eq!(clean_model_output("  hello  "), "hello");
+    }
+
+    #[test]
+    fn test_clean_model_output_strips_control_chars() {
+        // byte-level BPE decoding artefact: 0x10 (DLE) must be stripped
+        assert_eq!(clean_model_output("epub\x10にしたい"), "epubにしたい");
+        assert_eq!(clean_model_output("\x01\x02abc\x10"), "abc");
+        // Normal printable ASCII must be kept
+        assert_eq!(clean_model_output("epub"), "epub");
     }
 
     #[test]
