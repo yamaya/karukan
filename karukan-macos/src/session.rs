@@ -1492,4 +1492,211 @@ mod tests {
         assert_eq!(KarukanKey::from_u32(11), Some(KarukanKey::ConvertKatakana));
         assert_eq!(KarukanKey::from_u32(12), Some(KarukanKey::ConvertAscii));
     }
+
+    // ── composing_hiragana tests ──
+
+    #[test]
+    fn test_composing_hiragana_returns_text() {
+        let mut s = KarukanSession::new();
+        "aiu".chars().for_each(|c| { s.push_char(c); });
+        assert_eq!(s.composing_hiragana(), Some("あいう"));
+    }
+
+    #[test]
+    fn test_composing_hiragana_none_when_empty_state() {
+        let s = KarukanSession::new();
+        assert_eq!(s.composing_hiragana(), None);
+    }
+
+    #[test]
+    fn test_composing_hiragana_none_when_input_buf_empty() {
+        let mut s = KarukanSession::new();
+        // "k" だけでは input_buf は空（romaji バッファにのみ存在）
+        s.push_char('k');
+        // input_buf.text は空なので composing_hiragana は None
+        assert_eq!(s.composing_hiragana(), None);
+    }
+
+    #[test]
+    fn test_composing_hiragana_none_after_commit() {
+        let mut s = KarukanSession::new();
+        s.push_char('a');
+        s.push_key(KarukanKey::Return);
+        assert!(s.is_empty());
+        assert_eq!(s.composing_hiragana(), None);
+    }
+
+    // ── apply_live_candidate tests ──
+
+    #[test]
+    fn test_apply_live_candidate_basic() {
+        let mut s = KarukanSession::new();
+        "nadesi".chars().for_each(|c| { s.push_char(c); });
+        assert_eq!(s.preedit.text.to_str().unwrap(), "なでし");
+
+        s.apply_live_candidate("撫子", "なでし");
+
+        assert!(s.preedit.dirty);
+        assert_eq!(s.preedit.text.to_str().unwrap(), "撫子");
+        assert!(!s.is_empty()); // Composing のまま
+        assert!(!s.commit.dirty);
+    }
+
+    #[test]
+    fn test_apply_live_candidate_stale_source_ignored() {
+        let mut s = KarukanSession::new();
+        "nadesi".chars().for_each(|c| { s.push_char(c); });
+
+        // source が現在の input_buf.text ("なでし") と不一致 → 無視
+        s.apply_live_candidate("撫子", "なで");
+        // preedit は変わらない
+        assert_eq!(s.preedit.text.to_str().unwrap(), "なでし");
+    }
+
+    #[test]
+    fn test_apply_live_candidate_not_composing_ignored() {
+        let mut s = KarukanSession::new();
+        assert!(s.is_empty());
+        // Empty 状態 → 無視される
+        s.apply_live_candidate("撫子", "");
+        assert!(s.is_empty());
+        assert!(!s.preedit.dirty);
+    }
+
+    #[test]
+    fn test_apply_live_candidate_includes_romaji_buffer() {
+        let mut s = KarukanSession::new();
+        s.push_char('a'); // input_buf = "あ"
+        s.push_char('k'); // romaji buffer = "k"
+
+        s.apply_live_candidate("亜", "あ");
+        // preedit = "亜" + "k"
+        assert_eq!(s.preedit.text.to_str().unwrap(), "亜k");
+    }
+
+    #[test]
+    fn test_backspace_clears_live_candidate() {
+        let mut s = KarukanSession::new();
+        "aiu".chars().for_each(|c| { s.push_char(c); });
+        s.apply_live_candidate("愛憂", "あいう");
+        assert_eq!(s.preedit.text.to_str().unwrap(), "愛憂");
+
+        s.push_key(KarukanKey::Backspace);
+        // live_candidate がクリアされ、ひらがな表示 ("あい") に戻る
+        assert_eq!(s.preedit.text.to_str().unwrap(), "あい");
+    }
+
+    #[test]
+    fn test_commit_uses_live_candidate_when_source_matches() {
+        let mut s = KarukanSession::new();
+        "aiu".chars().for_each(|c| { s.push_char(c); });
+        s.apply_live_candidate("愛憂", "あいう");
+
+        s.push_key(KarukanKey::Return);
+        assert!(s.commit.dirty);
+        assert_eq!(s.commit.text.to_str().unwrap(), "愛憂");
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn test_commit_ignores_stale_live_candidate() {
+        let mut s = KarukanSession::new();
+        "aiu".chars().for_each(|c| { s.push_char(c); });
+        // source が stale → apply は no-op
+        s.apply_live_candidate("愛憂", "あい");
+        assert_eq!(s.preedit.text.to_str().unwrap(), "あいう");
+
+        // Return → ひらがなをコミット
+        s.push_key(KarukanKey::Return);
+        assert!(s.commit.dirty);
+        assert_eq!(s.commit.text.to_str().unwrap(), "あいう");
+    }
+
+    #[test]
+    fn test_escape_two_step_with_live_candidate() {
+        let mut s = KarukanSession::new();
+        "aiu".chars().for_each(|c| { s.push_char(c); });
+        s.apply_live_candidate("愛憂", "あいう");
+
+        // 1 回目 Escape: live_candidate のみクリア
+        s.push_key(KarukanKey::Escape);
+        assert!(!s.is_empty()); // まだ Composing
+        assert_eq!(s.preedit.text.to_str().unwrap(), "あいう");
+
+        // 2 回目 Escape: 全キャンセル
+        s.push_key(KarukanKey::Escape);
+        assert!(s.is_empty());
+        assert!(!s.commit.dirty);
+    }
+
+    // ── set_composing_hiragana tests ──
+
+    #[test]
+    fn test_set_composing_hiragana_from_empty() {
+        let mut s = KarukanSession::new();
+        assert!(s.is_empty());
+        s.set_composing_hiragana("かきく");
+        assert!(!s.is_empty());
+        assert_eq!(s.preedit.text.to_str().unwrap(), "かきく");
+        // cursor は末尾 ("かきく" = 9 bytes)
+        assert_eq!(s.preedit.caret_bytes, 9);
+    }
+
+    #[test]
+    fn test_set_composing_hiragana_overwrites_existing() {
+        let mut s = KarukanSession::new();
+        s.push_char('a'); // "あ"
+        s.set_composing_hiragana("なでしこ");
+        assert_eq!(s.preedit.text.to_str().unwrap(), "なでしこ");
+    }
+
+    #[test]
+    fn test_set_composing_hiragana_empty_is_noop() {
+        let mut s = KarukanSession::new();
+        s.set_composing_hiragana(""); // no-op
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn test_set_composing_hiragana_resets_romaji() {
+        let mut s = KarukanSession::new();
+        s.push_char('k'); // romaji buffer に "k" が残る
+        assert!(s.is_consonant_pending());
+        s.set_composing_hiragana("さくら");
+        assert!(!s.is_consonant_pending()); // romaji バッファがクリアされた
+        assert_eq!(s.preedit.text.to_str().unwrap(), "さくら");
+    }
+
+    #[test]
+    fn test_set_composing_hiragana_clears_live_candidate() {
+        let mut s = KarukanSession::new();
+        "aiu".chars().for_each(|c| { s.push_char(c); });
+        s.apply_live_candidate("愛憂", "あいう");
+        assert_eq!(s.preedit.text.to_str().unwrap(), "愛憂");
+
+        // set_composing_hiragana は live_candidate もクリアする
+        s.set_composing_hiragana("こんにちは");
+        assert_eq!(s.preedit.text.to_str().unwrap(), "こんにちは");
+        // 次の Return はひらがなをコミットする (live_candidate ではない)
+        s.push_key(KarukanKey::Return);
+        assert_eq!(s.commit.text.to_str().unwrap(), "こんにちは");
+    }
+
+    // ── select_candidate 境界値 ──
+
+    #[test]
+    fn test_select_candidate_out_of_range() {
+        let mut s = KarukanSession::new();
+        s.push_char('a');
+        s.push_key(KarukanKey::Space); // → Conversion
+        assert!(!s.select_candidate(999)); // 範囲外 → false
+        assert!(!s.is_empty()); // まだ Conversion
+    }
+
+    #[test]
+    fn test_select_candidate_not_in_conversion() {
+        let mut s = KarukanSession::new();
+        s.push_char('a'); // Composing 状態
+        assert!(!s.select_candidate(0)); // Conversion でない → false
+    }
 }

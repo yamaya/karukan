@@ -5,18 +5,21 @@
 //! to a temporary directory so that `~/Library/Application Support/` is never
 //! touched during testing.
 
-use std::ffi::{CStr, CString};
+use std::ffi::{CStr, CString, c_char};
 use std::ptr;
 use std::sync::Mutex;
 
 use super::KarukanSession;
-use super::input::{karukan_push_char, karukan_push_key};
+use super::input::{
+    karukan_apply_live_candidate, karukan_push_char, karukan_push_key, karukan_select_candidate,
+    karukan_set_composing_hiragana,
+};
 use super::lifecycle::{karukan_session_free, karukan_session_init, karukan_session_new};
-use super::input::karukan_select_candidate;
 use super::query::{
     karukan_get_candidate, karukan_get_candidate_count, karukan_get_candidate_cursor,
-    karukan_get_commit, karukan_get_preedit, karukan_get_preedit_caret, karukan_get_preedit_len,
-    karukan_has_commit, karukan_is_empty, karukan_save_learning,
+    karukan_get_commit, karukan_get_composing_hiragana, karukan_get_preedit,
+    karukan_get_preedit_caret, karukan_get_preedit_len, karukan_has_commit, karukan_is_consonant_pending,
+    karukan_is_empty, karukan_save_learning,
 };
 
 // ---------------------------------------------------------------------------
@@ -30,6 +33,13 @@ const KEY_RETURN: u32 = 1;
 const KEY_BACKSPACE: u32 = 2;
 const KEY_ESCAPE: u32 = 3;
 const KEY_SPACE: u32 = 4;
+const KEY_UP: u32 = 7;
+const KEY_DOWN: u32 = 8;
+#[allow(dead_code)]
+const KEY_TAB: u32 = 9;
+const KEY_CONVERT_HIRAGANA: u32 = 10;
+const KEY_CONVERT_KATAKANA: u32 = 11;
+const KEY_CONVERT_ASCII: u32 = 12;
 
 // ---------------------------------------------------------------------------
 // RAII test helper
@@ -134,6 +144,40 @@ impl TestSession {
 
     fn select_candidate(&self, index: u32) -> bool {
         karukan_select_candidate(self.0, index) == 1
+    }
+
+    // --- live conversion helpers ---
+
+    fn apply_live_candidate(&self, candidate: &str, source: &str) -> bool {
+        let cand = CString::new(candidate).unwrap();
+        let src = CString::new(source).unwrap();
+        karukan_apply_live_candidate(self.0, cand.as_ptr(), src.as_ptr()) == 1
+    }
+
+    fn set_composing_hiragana(&self, hiragana: &str) -> bool {
+        let cs = CString::new(hiragana).unwrap();
+        karukan_set_composing_hiragana(self.0, cs.as_ptr()) == 1
+    }
+
+    /// Returns the composing hiragana text via the buffer API.
+    /// Empty string when not in Composing state or input_buf is empty.
+    fn composing_hiragana(&self) -> String {
+        let mut buf = vec![0u8; 512];
+        let len = karukan_get_composing_hiragana(
+            self.0,
+            buf.as_mut_ptr() as *mut c_char,
+            512,
+        );
+        if len <= 0 {
+            return String::new();
+        }
+        std::str::from_utf8(&buf[..len as usize])
+            .unwrap_or("")
+            .to_owned()
+    }
+
+    fn is_consonant_pending(&self) -> bool {
+        karukan_is_consonant_pending(self.0) == 1
     }
 }
 
@@ -439,6 +483,448 @@ fn test_space_key_triggers_conversion() {
     assert!(!s.is_empty());
     // Candidate cache should have at least 1 entry (fallback = the hiragana reading).
     assert!(s.candidate_count() > 0);
+}
+
+// ---------------------------------------------------------------------------
+// Live conversion — apply_live_candidate
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_apply_live_candidate_basic() {
+    let s = TestSession::new();
+    for ch in "nadesi".chars() {
+        s.push_char(&ch.to_string());
+    }
+    // input_buf.text == "なでし"
+    assert_eq!(s.preedit(), "なでし");
+
+    // バックグラウンド推論が "撫子" を返してきた
+    assert!(s.apply_live_candidate("撫子", "なでし"));
+    // preedit が変換済みテキストに更新される
+    assert_eq!(s.preedit(), "撫子");
+    // Composing のまま（コミットなし）
+    assert!(!s.has_commit());
+    assert!(!s.is_empty());
+}
+
+#[test]
+fn test_apply_live_candidate_stale_source_ignored() {
+    let s = TestSession::new();
+    for ch in "nadesi".chars() {
+        s.push_char(&ch.to_string());
+    }
+    assert_eq!(s.preedit(), "なでし");
+
+    // source が "なで" (stale) — input_buf.text は "なでし"
+    // FFI の戻り値は preedit.dirty の残留状態に依存するため確認しない。
+    // 重要なのは preedit テキストが変わっていないこと。
+    s.apply_live_candidate("撫子", "なで");
+    assert_eq!(s.preedit(), "なでし");
+}
+
+#[test]
+fn test_apply_live_candidate_when_not_composing_ignored() {
+    let s = TestSession::new();
+    // Empty 状態 — 無視される
+    assert!(!s.apply_live_candidate("撫子", ""));
+    assert!(s.is_empty());
+}
+
+#[test]
+fn test_apply_live_candidate_with_pending_romaji() {
+    let s = TestSession::new();
+    s.push_char("a"); // "あ" → input_buf
+    s.push_char("k"); // romaji バッファに "k" 残存、input_buf は "あ" のまま
+    assert_eq!(s.preedit(), "あk");
+
+    // source = "あ" (input_buf.text) — stale ではない
+    assert!(s.apply_live_candidate("亜", "あ"));
+    // preedit = "亜" + "k" (live + romaji buffer)
+    assert_eq!(s.preedit(), "亜k");
+}
+
+#[test]
+fn test_live_candidate_cleared_by_backspace() {
+    let s = TestSession::new();
+    for ch in "aiu".chars() {
+        s.push_char(&ch.to_string());
+    }
+    s.apply_live_candidate("愛憂", "あいう");
+    assert_eq!(s.preedit(), "愛憂");
+
+    // Backspace → live_candidate クリア、ひらがな表示に戻る
+    s.push_key(KEY_BACKSPACE);
+    // "あいう" の末尾 "う" が削除されて "あい"
+    assert_eq!(s.preedit(), "あい");
+    assert!(!s.is_empty());
+}
+
+#[test]
+fn test_live_candidate_commit_matching_source() {
+    let s = TestSession::new();
+    for ch in "aiu".chars() {
+        s.push_char(&ch.to_string());
+    }
+    s.apply_live_candidate("愛憂", "あいう");
+    assert_eq!(s.preedit(), "愛憂");
+
+    // Return → live_candidate をコミット
+    s.push_key(KEY_RETURN);
+    assert!(s.has_commit());
+    assert_eq!(s.commit_text(), "愛憂");
+    assert!(s.is_empty());
+}
+
+#[test]
+fn test_live_candidate_stale_commit_falls_back_to_hiragana() {
+    let s = TestSession::new();
+    for ch in "aiu".chars() {
+        s.push_char(&ch.to_string());
+    }
+    assert_eq!(s.preedit(), "あいう");
+
+    // source = "あい" だが input_buf は "あいう" — stale なので preedit は変わらない
+    // (FFI の戻り値は preedit.dirty 残留状態に依存するため確認しない)
+    s.apply_live_candidate("愛憂", "あい");
+    assert_eq!(s.preedit(), "あいう"); // preedit が更新されていない
+
+    // Return → live_candidate は stale なのでひらがなをコミット
+    s.push_key(KEY_RETURN);
+    assert!(s.has_commit());
+    assert_eq!(s.commit_text(), "あいう");
+}
+
+#[test]
+fn test_escape_two_step_with_live_candidate() {
+    let s = TestSession::new();
+    for ch in "aiu".chars() {
+        s.push_char(&ch.to_string());
+    }
+    s.apply_live_candidate("愛憂", "あいう");
+    assert_eq!(s.preedit(), "愛憂");
+
+    // 1 回目 Escape: live_candidate をクリアしてひらがな表示に戻る
+    assert!(s.push_key(KEY_ESCAPE));
+    assert!(!s.is_empty()); // まだ Composing
+    assert_eq!(s.preedit(), "あいう"); // ひらがな復元
+
+    // 2 回目 Escape: 全キャンセル
+    assert!(s.push_key(KEY_ESCAPE));
+    assert!(s.is_empty());
+    assert!(!s.has_commit());
+}
+
+// ---------------------------------------------------------------------------
+// set_composing_hiragana
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_set_composing_hiragana_from_empty() {
+    let s = TestSession::new();
+    assert!(s.is_empty());
+    assert!(s.set_composing_hiragana("かきく"));
+    assert!(!s.is_empty());
+    assert_eq!(s.preedit(), "かきく");
+}
+
+#[test]
+fn test_set_composing_hiragana_overwrites_existing() {
+    let s = TestSession::new();
+    s.push_char("a"); // "あ"
+    assert_eq!(s.preedit(), "あ");
+
+    s.set_composing_hiragana("なでしこ");
+    assert_eq!(s.preedit(), "なでしこ");
+}
+
+#[test]
+fn test_set_composing_hiragana_empty_string_is_noop() {
+    let s = TestSession::new();
+    // 空文字列は no-op — セッションは Empty のまま
+    s.set_composing_hiragana("");
+    assert!(s.is_empty());
+    assert_eq!(s.preedit_len(), 0);
+}
+
+#[test]
+fn test_set_composing_hiragana_clears_romaji_buffer() {
+    let s = TestSession::new();
+    s.push_char("k"); // romaji バッファに "k" が残る
+    assert!(s.is_consonant_pending());
+
+    // set_composing_hiragana はローマ字バッファをリセットする
+    s.set_composing_hiragana("さくら");
+    assert_eq!(s.preedit(), "さくら");
+    assert!(!s.is_consonant_pending()); // romaji バッファがクリアされた
+}
+
+// ---------------------------------------------------------------------------
+// karukan_get_composing_hiragana
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_get_composing_hiragana_returns_text() {
+    let s = TestSession::new();
+    for ch in "aiu".chars() {
+        s.push_char(&ch.to_string());
+    }
+    assert_eq!(s.composing_hiragana(), "あいう");
+}
+
+#[test]
+fn test_get_composing_hiragana_empty_when_not_composing() {
+    let s = TestSession::new();
+    assert_eq!(s.composing_hiragana(), ""); // Empty 状態
+}
+
+#[test]
+fn test_get_composing_hiragana_empty_after_commit() {
+    let s = TestSession::new();
+    s.push_char("a");
+    s.push_key(KEY_RETURN);
+    assert!(s.is_empty());
+    assert_eq!(s.composing_hiragana(), "");
+}
+
+// ---------------------------------------------------------------------------
+// karukan_is_consonant_pending
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_is_consonant_pending_true_for_pending_consonant() {
+    let s = TestSession::new();
+    s.push_char("k"); // "k" が romaji バッファに残る
+    assert!(s.is_consonant_pending());
+}
+
+#[test]
+fn test_is_consonant_pending_false_after_complete_kana() {
+    let s = TestSession::new();
+    s.push_char("k");
+    s.push_char("a"); // "か" — バッファ消費
+    assert!(!s.is_consonant_pending());
+}
+
+#[test]
+fn test_is_consonant_pending_false_when_empty() {
+    let s = TestSession::new();
+    assert!(!s.is_consonant_pending());
+}
+
+// ---------------------------------------------------------------------------
+// Conversion 状態 — 追加 FFI テスト
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_conversion_return_commits_ffi() {
+    let s = TestSession::new();
+    s.push_char("a");
+    s.push_key(KEY_SPACE); // → Conversion
+
+    assert!(!s.is_empty());
+    assert!(s.candidate_count() > 0);
+
+    assert!(s.push_key(KEY_RETURN));
+    assert!(s.has_commit());
+    assert!(!s.commit_text().is_empty());
+    assert!(s.is_empty());
+}
+
+#[test]
+fn test_conversion_escape_returns_to_composing_ffi() {
+    let s = TestSession::new();
+    s.push_char("a");
+    s.push_key(KEY_SPACE); // → Conversion
+
+    assert!(s.push_key(KEY_ESCAPE));
+    // Composing に戻る
+    assert!(!s.is_empty());
+    assert_eq!(s.preedit(), "あ");
+    assert_eq!(s.candidate_count(), 0);
+    assert!(!s.has_commit());
+}
+
+#[test]
+fn test_conversion_cursor_down_ffi() {
+    let s = TestSession::new();
+    for ch in "aiu".chars() {
+        s.push_char(&ch.to_string());
+    }
+    s.push_key(KEY_SPACE);
+
+    let count = s.candidate_count();
+    assert!(count >= 1);
+    assert_eq!(s.candidate_cursor(), 0);
+
+    s.push_key(KEY_DOWN);
+    // count == 1 なら wrap して 0 のまま; count > 1 なら 1 へ
+    let expected = if count == 1 { 0 } else { 1 };
+    assert_eq!(s.candidate_cursor(), expected);
+}
+
+#[test]
+fn test_conversion_cursor_full_wrap_ffi() {
+    let s = TestSession::new();
+    s.push_char("a");
+    s.push_key(KEY_SPACE);
+
+    let count = s.candidate_count();
+    assert!(count >= 1);
+
+    // count 回 Down を押すと先頭 (0) に戻る
+    for _ in 0..count {
+        s.push_key(KEY_DOWN);
+    }
+    assert_eq!(s.candidate_cursor(), 0);
+}
+
+#[test]
+fn test_conversion_cursor_down_then_up_ffi() {
+    let s = TestSession::new();
+    s.push_char("a");
+    s.push_key(KEY_SPACE);
+
+    assert_eq!(s.candidate_cursor(), 0);
+    s.push_key(KEY_DOWN);
+    s.push_key(KEY_UP);
+    assert_eq!(s.candidate_cursor(), 0);
+}
+
+#[test]
+fn test_conversion_backspace_cancels_and_deletes_ffi() {
+    let s = TestSession::new();
+    // "あい" を Conversion へ
+    s.push_char("a");
+    s.push_char("i");
+    s.push_key(KEY_SPACE);
+
+    // Backspace in Conversion: cancel_conversion → Composing + do_backspace (末尾1文字削除)
+    assert!(s.push_key(KEY_BACKSPACE));
+    assert!(!s.is_empty()); // Composing に戻る
+    assert_eq!(s.preedit(), "あ"); // "い" が削除された
+    assert_eq!(s.candidate_count(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// select_candidate — 境界値テスト (FFI)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_select_candidate_in_range_commits_ffi() {
+    let s = TestSession::new();
+    s.push_char("a");
+    s.push_key(KEY_SPACE);
+
+    assert!(s.select_candidate(0));
+    assert!(s.has_commit());
+    assert!(!s.commit_text().is_empty());
+    assert!(s.is_empty());
+}
+
+#[test]
+fn test_select_candidate_out_of_range_ffi() {
+    let s = TestSession::new();
+    s.push_char("a");
+    s.push_key(KEY_SPACE);
+
+    // 範囲外 → false、Conversion 状態を維持
+    assert!(!s.select_candidate(999));
+    assert!(!s.is_empty());
+    assert!(!s.has_commit());
+}
+
+#[test]
+fn test_select_candidate_not_in_conversion_ffi() {
+    let s = TestSession::new();
+    s.push_char("a"); // Composing 状態 (Conversion ではない)
+    assert!(!s.select_candidate(0));
+}
+
+// ---------------------------------------------------------------------------
+// 変換ショートカット (FFI) — ConvertHiragana / ConvertKatakana / ConvertAscii
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_convert_hiragana_key_ffi() {
+    let s = TestSession::new();
+    for ch in "nihongo".chars() {
+        s.push_char(&ch.to_string());
+    }
+    assert_eq!(s.preedit(), "にほんご");
+
+    assert!(s.push_key(KEY_CONVERT_HIRAGANA));
+    assert!(s.has_commit());
+    assert_eq!(s.commit_text(), "にほんご");
+    assert!(s.is_empty());
+}
+
+#[test]
+fn test_convert_katakana_key_ffi() {
+    let s = TestSession::new();
+    for ch in "nihongo".chars() {
+        s.push_char(&ch.to_string());
+    }
+
+    assert!(s.push_key(KEY_CONVERT_KATAKANA));
+    assert!(s.has_commit());
+    assert_eq!(s.commit_text(), "ニホンゴ");
+    assert!(s.is_empty());
+}
+
+#[test]
+fn test_convert_ascii_key_ffi() {
+    let s = TestSession::new();
+    // "にほんご" → hiragana_to_romaji → "nihonngo"
+    for ch in "nihongo".chars() {
+        s.push_char(&ch.to_string());
+    }
+
+    assert!(s.push_key(KEY_CONVERT_ASCII));
+    assert!(s.has_commit());
+    assert_eq!(s.commit_text(), "nihonngo");
+    assert!(s.is_empty());
+}
+
+#[test]
+fn test_convert_keys_when_empty_not_consumed_ffi() {
+    let s = TestSession::new();
+    // Empty 状態では全ての変換キーが非消費
+    assert!(!s.push_key(KEY_CONVERT_HIRAGANA));
+    assert!(!s.push_key(KEY_CONVERT_KATAKANA));
+    assert!(!s.push_key(KEY_CONVERT_ASCII));
+}
+
+#[test]
+fn test_convert_katakana_from_conversion_ffi() {
+    let s = TestSession::new();
+    s.push_char("a"); // "あ"
+    s.push_key(KEY_SPACE); // → Conversion
+
+    assert!(s.push_key(KEY_CONVERT_KATAKANA));
+    assert!(s.has_commit());
+    assert_eq!(s.commit_text(), "ア");
+    assert!(s.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// 入力バリデーション (FFI)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_control_char_rejected_ffi() {
+    let s = TestSession::new();
+    // Ctrl+A (\x01) は制御文字なので拒否される
+    assert!(!s.push_char("\x01"));
+    assert!(s.is_empty());
+}
+
+#[test]
+fn test_empty_string_push_char_rejected_ffi() {
+    let s = TestSession::new();
+    // 空文字列（コードポイントなし）は拒否される
+    let cs = CString::new("").unwrap();
+    assert_eq!(karukan_push_char(s.ptr(), cs.as_ptr()), 0);
+    assert!(s.is_empty());
 }
 
 // ---------------------------------------------------------------------------
