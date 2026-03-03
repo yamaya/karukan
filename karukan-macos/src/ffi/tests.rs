@@ -18,8 +18,8 @@ use super::lifecycle::{karukan_session_free, karukan_session_init, karukan_sessi
 use super::query::{
     karukan_get_candidate, karukan_get_candidate_count, karukan_get_candidate_cursor,
     karukan_get_commit, karukan_get_composing_hiragana, karukan_get_preedit,
-    karukan_get_preedit_caret, karukan_get_preedit_len, karukan_has_commit, karukan_is_consonant_pending,
-    karukan_is_empty, karukan_save_learning,
+    karukan_get_preedit_caret, karukan_get_preedit_len, karukan_has_commit,
+    karukan_is_consonant_pending, karukan_is_empty, karukan_save_learning,
 };
 
 // ---------------------------------------------------------------------------
@@ -139,7 +139,11 @@ impl TestSession {
             return None;
         }
         // SAFETY: pointer is valid until the next push_* call.
-        Some(unsafe { std::ffi::CStr::from_ptr(ptr) }.to_str().unwrap_or(""))
+        Some(
+            unsafe { std::ffi::CStr::from_ptr(ptr) }
+                .to_str()
+                .unwrap_or(""),
+        )
     }
 
     fn select_candidate(&self, index: u32) -> bool {
@@ -163,11 +167,7 @@ impl TestSession {
     /// Empty string when not in Composing state or input_buf is empty.
     fn composing_hiragana(&self) -> String {
         let mut buf = vec![0u8; 512];
-        let len = karukan_get_composing_hiragana(
-            self.0,
-            buf.as_mut_ptr() as *mut c_char,
-            512,
-        );
+        let len = karukan_get_composing_hiragana(self.0, buf.as_mut_ptr() as *mut c_char, 512);
         if len <= 0 {
             return String::new();
         }
@@ -947,4 +947,33 @@ fn test_save_learning_no_crash() {
 
     // SAFETY: same as above.
     unsafe { std::env::remove_var("KARUKAN_DATA_DIR") };
+}
+
+// ---------------------------------------------------------------------------
+// 全角スペース
+// ---------------------------------------------------------------------------
+
+/// Empty 状態で Space を押すと全角スペース (U+3000) がコミットされる。
+#[test]
+fn test_space_on_empty_commits_fullwidth_space_ffi() {
+    let s = TestSession::new();
+    assert!(s.is_empty());
+    // Space を押すと consumed かつ U+3000 がコミットされる。
+    assert!(s.push_key(KEY_SPACE), "Space in Empty should be consumed");
+    assert!(s.has_commit(), "should have pending commit");
+    assert_eq!(s.commit_text(), "\u{3000}", "should commit fullwidth space");
+    assert!(s.is_empty(), "state should remain Empty");
+}
+
+/// Composing 状態で Space を押しても全角スペースはコミットされない（変換モードへ）。
+#[test]
+fn test_space_on_composing_does_not_commit_fullwidth_space_ffi() {
+    let s = TestSession::new();
+    s.push_char("a"); // "あ"
+    s.push_key(KEY_SPACE); // → Conversion
+    // コミットはされない（変換候補が表示される）。
+    assert!(
+        !s.has_commit(),
+        "Space in Composing should not commit fullwidth space"
+    );
 }

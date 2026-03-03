@@ -18,7 +18,9 @@
 use std::ffi::CString;
 use std::sync::{Arc, OnceLock};
 
-use karukan_engine::{Backend, BackspaceResult, KanaKanjiConverter, LearningCache, RomajiConverter};
+use karukan_engine::{
+    Backend, BackspaceResult, KanaKanjiConverter, LearningCache, RomajiConverter,
+};
 
 // ---------------------------------------------------------------------------
 // Process-wide shared KanaKanjiConverter
@@ -310,9 +312,7 @@ impl KarukanSession {
                 .and_then(|(family, variant)| {
                     Backend::from_variant(family, variant).map_err(|e| e.to_string())
                 })
-                .and_then(|backend| {
-                    KanaKanjiConverter::new(backend).map_err(|e| e.to_string())
-                })
+                .and_then(|backend| KanaKanjiConverter::new(backend).map_err(|e| e.to_string()))
                 .map(Arc::new);
 
             match load_result {
@@ -447,6 +447,7 @@ impl KarukanSession {
     /// printable input while composing or when starting composition).
     pub fn push_char(&mut self, ch: char) -> bool {
         self.clear_flags();
+
         // ライブ変換結果が残っていれば、推論完了まで表示ベースとして使い続ける。
         // clone() で参照し live_candidate は保持する。apply_live_candidate() が
         // 新しい結果で上書きするか、do_commit/do_cancel で消費される。
@@ -518,7 +519,14 @@ impl KarukanSession {
     pub fn push_key(&mut self, key: KarukanKey) -> bool {
         self.clear_flags();
         match key {
-            // ── Empty state: pass everything through ──────────────────────
+            // ── Empty state ───────────────────────────────────────────────
+            // Space → 全角スペース (U+3000) をコミット（preedit なし時の標準日本語 IME 動作）。
+            // その他のキーはアプリにパススルー。
+            KarukanKey::Space if matches!(self.state, SessionState::Empty) => {
+                self.commit.text = CString::new("\u{3000}").unwrap_or_default();
+                self.commit.dirty = true;
+                true
+            }
             _ if matches!(self.state, SessionState::Empty) => false,
 
             // ── Convert shortcuts (Composing + Conversion) ───────────────
@@ -564,7 +572,7 @@ impl KarukanSession {
             }
             KarukanKey::Backspace if matches!(self.state, SessionState::Conversion(_)) => {
                 self.cancel_conversion(); // Conversion → Composing（ひらがな復元）
-                self.do_backspace();      // Composing の末尾1文字削除
+                self.do_backspace(); // Composing の末尾1文字削除
                 true
             }
             KarukanKey::Space | KarukanKey::Tab | KarukanKey::Down
@@ -845,7 +853,10 @@ impl KarukanSession {
         self.candidate_cache.cursor = 0;
 
         // Show first candidate in preedit.
-        let first = candidates.first().cloned().unwrap_or_else(|| hiragana.clone());
+        let first = candidates
+            .first()
+            .cloned()
+            .unwrap_or_else(|| hiragana.clone());
         self.update_preedit(&first);
         self.preedit.caret_bytes = first.len() as u32;
 
@@ -999,113 +1010,262 @@ static REVERSE_ROMAJI: LazyLock<Vec<(&str, &str)>> = LazyLock::new(|| {
     let mut table: Vec<(&str, &str)> = vec![
         // ── 拗音・特殊音（2文字以上のかな） ──
         // きゃ行
-        ("きゃ", "kya"), ("きゅ", "kyu"), ("きょ", "kyo"),
-        ("きぃ", "kyi"), ("きぇ", "kye"),
+        ("きゃ", "kya"),
+        ("きゅ", "kyu"),
+        ("きょ", "kyo"),
+        ("きぃ", "kyi"),
+        ("きぇ", "kye"),
         // くぁ行
-        ("くぁ", "kwa"), ("くぃ", "kwi"), ("くぅ", "kwu"),
-        ("くぇ", "kwe"), ("くぉ", "kwo"),
+        ("くぁ", "kwa"),
+        ("くぃ", "kwi"),
+        ("くぅ", "kwu"),
+        ("くぇ", "kwe"),
+        ("くぉ", "kwo"),
         // ぎゃ行
-        ("ぎゃ", "gya"), ("ぎゅ", "gyu"), ("ぎょ", "gyo"),
-        ("ぎぃ", "gyi"), ("ぎぇ", "gye"),
+        ("ぎゃ", "gya"),
+        ("ぎゅ", "gyu"),
+        ("ぎょ", "gyo"),
+        ("ぎぃ", "gyi"),
+        ("ぎぇ", "gye"),
         // ぐぁ行
-        ("ぐぁ", "gwa"), ("ぐぃ", "gwi"), ("ぐぅ", "gwu"),
-        ("ぐぇ", "gwe"), ("ぐぉ", "gwo"),
+        ("ぐぁ", "gwa"),
+        ("ぐぃ", "gwi"),
+        ("ぐぅ", "gwu"),
+        ("ぐぇ", "gwe"),
+        ("ぐぉ", "gwo"),
         // しゃ行
-        ("しゃ", "sha"), ("しゅ", "shu"), ("しょ", "sho"),
-        ("しぃ", "syi"), ("しぇ", "she"),
+        ("しゃ", "sha"),
+        ("しゅ", "shu"),
+        ("しょ", "sho"),
+        ("しぃ", "syi"),
+        ("しぇ", "she"),
         // すぁ行
-        ("すぁ", "swa"), ("すぃ", "swi"), ("すぅ", "swu"),
-        ("すぇ", "swe"), ("すぉ", "swo"),
+        ("すぁ", "swa"),
+        ("すぃ", "swi"),
+        ("すぅ", "swu"),
+        ("すぇ", "swe"),
+        ("すぉ", "swo"),
         // じゃ行
-        ("じゃ", "ja"), ("じゅ", "ju"), ("じょ", "jo"),
-        ("じぃ", "zyi"), ("じぇ", "je"),
+        ("じゃ", "ja"),
+        ("じゅ", "ju"),
+        ("じょ", "jo"),
+        ("じぃ", "zyi"),
+        ("じぇ", "je"),
         // ずぁ行
-        ("ずぁ", "zwa"), ("ずぃ", "zwi"), ("ずぅ", "zwu"),
-        ("ずぇ", "zwe"), ("ずぉ", "zwo"),
+        ("ずぁ", "zwa"),
+        ("ずぃ", "zwi"),
+        ("ずぅ", "zwu"),
+        ("ずぇ", "zwe"),
+        ("ずぉ", "zwo"),
         // ちゃ行
-        ("ちゃ", "cha"), ("ちゅ", "chu"), ("ちょ", "cho"),
-        ("ちぃ", "tyi"), ("ちぇ", "che"),
+        ("ちゃ", "cha"),
+        ("ちゅ", "chu"),
+        ("ちょ", "cho"),
+        ("ちぃ", "tyi"),
+        ("ちぇ", "che"),
         // つぁ行
-        ("つぁ", "tsa"), ("つぃ", "tsi"), ("つぇ", "tse"), ("つぉ", "tso"),
+        ("つぁ", "tsa"),
+        ("つぃ", "tsi"),
+        ("つぇ", "tse"),
+        ("つぉ", "tso"),
         // てゃ行
-        ("てゃ", "tha"), ("てぃ", "thi"), ("てゅ", "thu"),
-        ("てぇ", "the"), ("てょ", "tho"),
+        ("てゃ", "tha"),
+        ("てぃ", "thi"),
+        ("てゅ", "thu"),
+        ("てぇ", "the"),
+        ("てょ", "tho"),
         // とぁ行
-        ("とぁ", "twa"), ("とぃ", "twi"), ("とぅ", "twu"),
-        ("とぇ", "twe"), ("とぉ", "two"),
+        ("とぁ", "twa"),
+        ("とぃ", "twi"),
+        ("とぅ", "twu"),
+        ("とぇ", "twe"),
+        ("とぉ", "two"),
         // ぢゃ行
-        ("ぢゃ", "dya"), ("ぢゅ", "dyu"), ("ぢょ", "dyo"),
-        ("ぢぃ", "dyi"), ("ぢぇ", "dye"),
+        ("ぢゃ", "dya"),
+        ("ぢゅ", "dyu"),
+        ("ぢょ", "dyo"),
+        ("ぢぃ", "dyi"),
+        ("ぢぇ", "dye"),
         // でゃ行
-        ("でゃ", "dha"), ("でぃ", "dhi"), ("でゅ", "dhu"),
-        ("でぇ", "dhe"), ("でょ", "dho"),
+        ("でゃ", "dha"),
+        ("でぃ", "dhi"),
+        ("でゅ", "dhu"),
+        ("でぇ", "dhe"),
+        ("でょ", "dho"),
         // どぁ行
-        ("どぁ", "dwa"), ("どぃ", "dwi"), ("どぅ", "dwu"),
-        ("どぇ", "dwe"), ("どぉ", "dwo"),
+        ("どぁ", "dwa"),
+        ("どぃ", "dwi"),
+        ("どぅ", "dwu"),
+        ("どぇ", "dwe"),
+        ("どぉ", "dwo"),
         // にゃ行
-        ("にゃ", "nya"), ("にゅ", "nyu"), ("にょ", "nyo"),
-        ("にぃ", "nyi"), ("にぇ", "nye"),
+        ("にゃ", "nya"),
+        ("にゅ", "nyu"),
+        ("にょ", "nyo"),
+        ("にぃ", "nyi"),
+        ("にぇ", "nye"),
         // ひゃ行
-        ("ひゃ", "hya"), ("ひゅ", "hyu"), ("ひょ", "hyo"),
-        ("ひぃ", "hyi"), ("ひぇ", "hye"),
+        ("ひゃ", "hya"),
+        ("ひゅ", "hyu"),
+        ("ひょ", "hyo"),
+        ("ひぃ", "hyi"),
+        ("ひぇ", "hye"),
         // ふぁ行
-        ("ふぁ", "fa"), ("ふぃ", "fi"), ("ふぇ", "fe"), ("ふぉ", "fo"),
-        ("ふゃ", "fya"), ("ふゅ", "fyu"), ("ふょ", "fyo"),
+        ("ふぁ", "fa"),
+        ("ふぃ", "fi"),
+        ("ふぇ", "fe"),
+        ("ふぉ", "fo"),
+        ("ふゃ", "fya"),
+        ("ふゅ", "fyu"),
+        ("ふょ", "fyo"),
         // びゃ行
-        ("びゃ", "bya"), ("びゅ", "byu"), ("びょ", "byo"),
-        ("びぃ", "byi"), ("びぇ", "bye"),
+        ("びゃ", "bya"),
+        ("びゅ", "byu"),
+        ("びょ", "byo"),
+        ("びぃ", "byi"),
+        ("びぇ", "bye"),
         // ぴゃ行
-        ("ぴゃ", "pya"), ("ぴゅ", "pyu"), ("ぴょ", "pyo"),
-        ("ぴぃ", "pyi"), ("ぴぇ", "pye"),
+        ("ぴゃ", "pya"),
+        ("ぴゅ", "pyu"),
+        ("ぴょ", "pyo"),
+        ("ぴぃ", "pyi"),
+        ("ぴぇ", "pye"),
         // みゃ行
-        ("みゃ", "mya"), ("みゅ", "myu"), ("みょ", "myo"),
-        ("みぃ", "myi"), ("みぇ", "mye"),
+        ("みゃ", "mya"),
+        ("みゅ", "myu"),
+        ("みょ", "myo"),
+        ("みぃ", "myi"),
+        ("みぇ", "mye"),
         // りゃ行
-        ("りゃ", "rya"), ("りゅ", "ryu"), ("りょ", "ryo"),
-        ("りぃ", "ryi"), ("りぇ", "rye"),
+        ("りゃ", "rya"),
+        ("りゅ", "ryu"),
+        ("りょ", "ryo"),
+        ("りぃ", "ryi"),
+        ("りぇ", "rye"),
         // うぁ行
-        ("うぁ", "wha"), ("うぃ", "wi"), ("うぇ", "we"), ("うぉ", "who"),
+        ("うぁ", "wha"),
+        ("うぃ", "wi"),
+        ("うぇ", "we"),
+        ("うぉ", "who"),
         // いぇ
         ("いぇ", "ye"),
         // ゔ行
-        ("ゔぁ", "va"), ("ゔぃ", "vi"), ("ゔぇ", "ve"), ("ゔぉ", "vo"),
-        ("ゔゃ", "vya"), ("ゔゅ", "vyu"), ("ゔょ", "vyo"),
-
+        ("ゔぁ", "va"),
+        ("ゔぃ", "vi"),
+        ("ゔぇ", "ve"),
+        ("ゔぉ", "vo"),
+        ("ゔゃ", "vya"),
+        ("ゔゅ", "vyu"),
+        ("ゔょ", "vyo"),
         // ── 単独かな ──
-        ("あ", "a"), ("い", "i"), ("う", "u"), ("え", "e"), ("お", "o"),
-        ("か", "ka"), ("き", "ki"), ("く", "ku"), ("け", "ke"), ("こ", "ko"),
-        ("さ", "sa"), ("し", "shi"), ("す", "su"), ("せ", "se"), ("そ", "so"),
-        ("た", "ta"), ("ち", "chi"), ("つ", "tsu"), ("て", "te"), ("と", "to"),
-        ("な", "na"), ("に", "ni"), ("ぬ", "nu"), ("ね", "ne"), ("の", "no"),
-        ("は", "ha"), ("ひ", "hi"), ("ふ", "fu"), ("へ", "he"), ("ほ", "ho"),
-        ("ま", "ma"), ("み", "mi"), ("む", "mu"), ("め", "me"), ("も", "mo"),
-        ("や", "ya"), ("ゆ", "yu"), ("よ", "yo"),
-        ("ら", "ra"), ("り", "ri"), ("る", "ru"), ("れ", "re"), ("ろ", "ro"),
-        ("わ", "wa"), ("を", "wo"), ("ん", "nn"),
+        ("あ", "a"),
+        ("い", "i"),
+        ("う", "u"),
+        ("え", "e"),
+        ("お", "o"),
+        ("か", "ka"),
+        ("き", "ki"),
+        ("く", "ku"),
+        ("け", "ke"),
+        ("こ", "ko"),
+        ("さ", "sa"),
+        ("し", "shi"),
+        ("す", "su"),
+        ("せ", "se"),
+        ("そ", "so"),
+        ("た", "ta"),
+        ("ち", "chi"),
+        ("つ", "tsu"),
+        ("て", "te"),
+        ("と", "to"),
+        ("な", "na"),
+        ("に", "ni"),
+        ("ぬ", "nu"),
+        ("ね", "ne"),
+        ("の", "no"),
+        ("は", "ha"),
+        ("ひ", "hi"),
+        ("ふ", "fu"),
+        ("へ", "he"),
+        ("ほ", "ho"),
+        ("ま", "ma"),
+        ("み", "mi"),
+        ("む", "mu"),
+        ("め", "me"),
+        ("も", "mo"),
+        ("や", "ya"),
+        ("ゆ", "yu"),
+        ("よ", "yo"),
+        ("ら", "ra"),
+        ("り", "ri"),
+        ("る", "ru"),
+        ("れ", "re"),
+        ("ろ", "ro"),
+        ("わ", "wa"),
+        ("を", "wo"),
+        ("ん", "nn"),
         // 濁音
-        ("が", "ga"), ("ぎ", "gi"), ("ぐ", "gu"), ("げ", "ge"), ("ご", "go"),
-        ("ざ", "za"), ("じ", "ji"), ("ず", "zu"), ("ぜ", "ze"), ("ぞ", "zo"),
-        ("だ", "da"), ("ぢ", "di"), ("づ", "du"), ("で", "de"), ("ど", "do"),
-        ("ば", "ba"), ("び", "bi"), ("ぶ", "bu"), ("べ", "be"), ("ぼ", "bo"),
+        ("が", "ga"),
+        ("ぎ", "gi"),
+        ("ぐ", "gu"),
+        ("げ", "ge"),
+        ("ご", "go"),
+        ("ざ", "za"),
+        ("じ", "ji"),
+        ("ず", "zu"),
+        ("ぜ", "ze"),
+        ("ぞ", "zo"),
+        ("だ", "da"),
+        ("ぢ", "di"),
+        ("づ", "du"),
+        ("で", "de"),
+        ("ど", "do"),
+        ("ば", "ba"),
+        ("び", "bi"),
+        ("ぶ", "bu"),
+        ("べ", "be"),
+        ("ぼ", "bo"),
         // 半濁音
-        ("ぱ", "pa"), ("ぴ", "pi"), ("ぷ", "pu"), ("ぺ", "pe"), ("ぽ", "po"),
+        ("ぱ", "pa"),
+        ("ぴ", "pi"),
+        ("ぷ", "pu"),
+        ("ぺ", "pe"),
+        ("ぽ", "po"),
         // ゔ
         ("ゔ", "vu"),
         // 小文字
-        ("ぁ", "xa"), ("ぃ", "xi"), ("ぅ", "xu"), ("ぇ", "xe"), ("ぉ", "xo"),
-        ("ゃ", "xya"), ("ゅ", "xyu"), ("ょ", "xyo"),
-        ("っ", "xtu"), ("ゎ", "xwa"),
+        ("ぁ", "xa"),
+        ("ぃ", "xi"),
+        ("ぅ", "xu"),
+        ("ぇ", "xe"),
+        ("ぉ", "xo"),
+        ("ゃ", "xya"),
+        ("ゅ", "xyu"),
+        ("ょ", "xyo"),
+        ("っ", "xtu"),
+        ("ゎ", "xwa"),
         // 歴史的かな
-        ("ゐ", "wyi"), ("ゑ", "wye"),
+        ("ゐ", "wyi"),
+        ("ゑ", "wye"),
         // 長音記号
         ("ー", "-"),
         // 句読点・記号
-        ("、", ","), ("。", "."), ("・", "/"),
-        ("？", "?"), ("！", "!"), ("〜", "~"),
-        ("「", "["), ("」", "]"),
-        ("『", "z["), ("』", "z]"),
-        ("…", "z."), ("‥", "z,"),
-        ("←", "zh"), ("↓", "zj"), ("↑", "zk"), ("→", "zl"),
+        ("、", ","),
+        ("。", "."),
+        ("・", "/"),
+        ("？", "?"),
+        ("！", "!"),
+        ("〜", "~"),
+        ("「", "["),
+        ("」", "]"),
+        ("『", "z["),
+        ("』", "z]"),
+        ("…", "z."),
+        ("‥", "z,"),
+        ("←", "zh"),
+        ("↓", "zj"),
+        ("↑", "zk"),
+        ("→", "zl"),
     ];
     // ひらがなの長い順にソート（最長一致）
     table.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
@@ -1226,21 +1386,27 @@ mod tests {
     #[test]
     fn test_sokuon() {
         let mut s = KarukanSession::new();
-        "kka".chars().for_each(|c| { s.push_char(c); });
+        "kka".chars().for_each(|c| {
+            s.push_char(c);
+        });
         assert_eq!(s.preedit.text.to_str().unwrap(), "っか");
     }
 
     #[test]
     fn test_youon() {
         let mut s = KarukanSession::new();
-        "kya".chars().for_each(|c| { s.push_char(c); });
+        "kya".chars().for_each(|c| {
+            s.push_char(c);
+        });
         assert_eq!(s.preedit.text.to_str().unwrap(), "きゃ");
     }
 
     #[test]
     fn test_nn() {
         let mut s = KarukanSession::new();
-        "nn".chars().for_each(|c| { s.push_char(c); });
+        "nn".chars().for_each(|c| {
+            s.push_char(c);
+        });
         assert_eq!(s.preedit.text.to_str().unwrap(), "ん");
     }
 
@@ -1316,7 +1482,9 @@ mod tests {
     #[test]
     fn test_conversion_next_candidate() {
         let mut s = KarukanSession::new();
-        "nihongo".chars().for_each(|c| { s.push_char(c); });
+        "nihongo".chars().for_each(|c| {
+            s.push_char(c);
+        });
         s.push_key(KarukanKey::Space);
         let count = s.candidate_cache.items.len();
         if count > 1 {
@@ -1339,16 +1507,24 @@ mod tests {
     #[test]
     fn test_space_on_empty_inserts_fullwidth_space() {
         let mut s = KarukanSession::new();
-        // Space when Empty → pass through (not consumed).
+        // Space when Empty → 全角スペース (U+3000) をコミットして consumed。
         let consumed = s.push_key(KarukanKey::Space);
-        assert!(!consumed);
-        assert!(!s.commit.dirty);
+        assert!(consumed, "Space in Empty should be consumed");
+        assert!(s.commit.dirty, "commit should be dirty");
+        assert_eq!(s.commit.text.to_str().unwrap(), "\u{3000}");
+        assert!(s.is_empty(), "state should remain Empty");
+    }
 
-        // But composing "a" then space should trigger conversion (not insert 　).
-        s.push_char('a');
+    #[test]
+    fn test_space_on_composing_triggers_conversion_not_fullwidth() {
+        let mut s = KarukanSession::new();
+        s.push_char('a'); // "あ" in composing
         s.push_key(KarukanKey::Space);
-        // Should be in Conversion, not committing a full-width space.
-        assert!(!s.commit.dirty);
+        // Composing + Space → Conversion。全角スペースはコミットしない。
+        assert!(
+            !s.commit.dirty,
+            "should not commit fullwidth space in composing mode"
+        );
     }
 
     // ── Convert shortcut tests ──
@@ -1356,7 +1532,9 @@ mod tests {
     #[test]
     fn test_convert_hiragana_from_composing() {
         let mut s = KarukanSession::new();
-        "nihongo".chars().for_each(|c| { s.push_char(c); });
+        "nihongo".chars().for_each(|c| {
+            s.push_char(c);
+        });
         assert_eq!(s.preedit.text.to_str().unwrap(), "にほんご");
         s.push_key(KarukanKey::ConvertHiragana);
         assert!(s.commit.dirty);
@@ -1367,7 +1545,9 @@ mod tests {
     #[test]
     fn test_convert_katakana_from_composing() {
         let mut s = KarukanSession::new();
-        "nihongo".chars().for_each(|c| { s.push_char(c); });
+        "nihongo".chars().for_each(|c| {
+            s.push_char(c);
+        });
         s.push_key(KarukanKey::ConvertKatakana);
         assert!(s.commit.dirty);
         assert_eq!(s.commit.text.to_str().unwrap(), "ニホンゴ");
@@ -1377,7 +1557,9 @@ mod tests {
     #[test]
     fn test_convert_ascii_from_composing() {
         let mut s = KarukanSession::new();
-        "nihongo".chars().for_each(|c| { s.push_char(c); });
+        "nihongo".chars().for_each(|c| {
+            s.push_char(c);
+        });
         s.push_key(KarukanKey::ConvertAscii);
         assert!(s.commit.dirty);
         assert_eq!(s.commit.text.to_str().unwrap(), "nihonngo");
@@ -1411,7 +1593,9 @@ mod tests {
     #[test]
     fn test_convert_ascii_from_conversion() {
         let mut s = KarukanSession::new();
-        "ka".chars().for_each(|c| { s.push_char(c); });
+        "ka".chars().for_each(|c| {
+            s.push_char(c);
+        });
         s.push_key(KarukanKey::Space);
         s.push_key(KarukanKey::ConvertAscii);
         assert!(s.commit.dirty);
@@ -1498,7 +1682,9 @@ mod tests {
     #[test]
     fn test_composing_hiragana_returns_text() {
         let mut s = KarukanSession::new();
-        "aiu".chars().for_each(|c| { s.push_char(c); });
+        "aiu".chars().for_each(|c| {
+            s.push_char(c);
+        });
         assert_eq!(s.composing_hiragana(), Some("あいう"));
     }
 
@@ -1531,7 +1717,9 @@ mod tests {
     #[test]
     fn test_apply_live_candidate_basic() {
         let mut s = KarukanSession::new();
-        "nadesi".chars().for_each(|c| { s.push_char(c); });
+        "nadesi".chars().for_each(|c| {
+            s.push_char(c);
+        });
         assert_eq!(s.preedit.text.to_str().unwrap(), "なでし");
 
         s.apply_live_candidate("撫子", "なでし");
@@ -1545,7 +1733,9 @@ mod tests {
     #[test]
     fn test_apply_live_candidate_stale_source_ignored() {
         let mut s = KarukanSession::new();
-        "nadesi".chars().for_each(|c| { s.push_char(c); });
+        "nadesi".chars().for_each(|c| {
+            s.push_char(c);
+        });
 
         // source が現在の input_buf.text ("なでし") と不一致 → 無視
         s.apply_live_candidate("撫子", "なで");
@@ -1577,7 +1767,9 @@ mod tests {
     #[test]
     fn test_backspace_clears_live_candidate() {
         let mut s = KarukanSession::new();
-        "aiu".chars().for_each(|c| { s.push_char(c); });
+        "aiu".chars().for_each(|c| {
+            s.push_char(c);
+        });
         s.apply_live_candidate("愛憂", "あいう");
         assert_eq!(s.preedit.text.to_str().unwrap(), "愛憂");
 
@@ -1589,7 +1781,9 @@ mod tests {
     #[test]
     fn test_commit_uses_live_candidate_when_source_matches() {
         let mut s = KarukanSession::new();
-        "aiu".chars().for_each(|c| { s.push_char(c); });
+        "aiu".chars().for_each(|c| {
+            s.push_char(c);
+        });
         s.apply_live_candidate("愛憂", "あいう");
 
         s.push_key(KarukanKey::Return);
@@ -1601,7 +1795,9 @@ mod tests {
     #[test]
     fn test_commit_ignores_stale_live_candidate() {
         let mut s = KarukanSession::new();
-        "aiu".chars().for_each(|c| { s.push_char(c); });
+        "aiu".chars().for_each(|c| {
+            s.push_char(c);
+        });
         // source が stale → apply は no-op
         s.apply_live_candidate("愛憂", "あい");
         assert_eq!(s.preedit.text.to_str().unwrap(), "あいう");
@@ -1615,7 +1811,9 @@ mod tests {
     #[test]
     fn test_escape_two_step_with_live_candidate() {
         let mut s = KarukanSession::new();
-        "aiu".chars().for_each(|c| { s.push_char(c); });
+        "aiu".chars().for_each(|c| {
+            s.push_char(c);
+        });
         s.apply_live_candidate("愛憂", "あいう");
 
         // 1 回目 Escape: live_candidate のみクリア
@@ -1670,7 +1868,9 @@ mod tests {
     #[test]
     fn test_set_composing_hiragana_clears_live_candidate() {
         let mut s = KarukanSession::new();
-        "aiu".chars().for_each(|c| { s.push_char(c); });
+        "aiu".chars().for_each(|c| {
+            s.push_char(c);
+        });
         s.apply_live_candidate("愛憂", "あいう");
         assert_eq!(s.preedit.text.to_str().unwrap(), "愛憂");
 

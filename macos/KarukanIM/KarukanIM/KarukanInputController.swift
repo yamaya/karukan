@@ -295,9 +295,6 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
             return consumed
         }
 
-        updateClientState(client: sender)
-        updateCandidatesPanel(sender: sender)
-
         // Rust が消費しなかった記号を全角に変換して挿入
         if !consumed, let fullWidth = Self.fullWidthMap[chars] {
             if karukan_is_empty(session) == 0 {
@@ -647,7 +644,7 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
         return nil
     }
 
-    /// ASCII 記号 → 全角記号のマッピング。
+    /// ASCII 記号 → 全角のマッピング。
     /// Rust（romaji converter）が消費しなかった記号に適用する。
     private static let fullWidthMap: [String: String] = [
         "!": "！", "?": "？",
