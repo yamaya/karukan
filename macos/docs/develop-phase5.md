@@ -572,6 +572,88 @@ T3: インジケーターアイコン
 
 ---
 
+---
+
+## 技術実装メモ: 句読点の自動コミット
+
+### 背景
+
+ユーザーが行頭で `?`、`!`、`.`、`,`、`~` などの記号を入力した場合、
+これらは ひらがな変換の対象ではなく、即座に確定すべき文字である。
+従来は preedit に表示されていたが、実装の不具合により何も入力されない問題が発生していた。
+
+### 解決方法
+
+#### Rust 側: 自動コミット判定 (session.rs)
+
+Empty 状態（composing 開始前）から記号が入力された場合、
+preedit を経由せず直接コミットする:
+
+```rust
+// `push_char()` 内で、romaji → hiragana 変換後
+let started_empty = matches!(self.state, SessionState::Empty);
+let romaji_buf_check = self.romaji.buffer();
+
+if started_empty
+    && romaji_buf_check.is_empty()
+    && new_hiragana.chars().count() == 1
+    && !is_hiragana_char(new_hiragana.chars().next().unwrap())
+{
+    // 記号は即座にコミット
+    self.commit.text = CString::new(new_hiragana.as_str()).unwrap_or_default();
+    self.commit.dirty = true;
+    self.romaji.reset();
+    self.input_buf.clear();
+    self.state = SessionState::Empty;
+    self.update_preedit("");
+    return true;
+}
+```
+
+ひらがな判定: `is_hiragana_char()` で U+3041–U+3096, U+309D–U+309F, U+30FC (ー) をチェック。
+
+#### Swift 側: hasPreedit トラッキング (KarukanIMExtension.swift)
+
+Rust が空の preedit を返した場合、`setMarkedText("")` を呼ぶタイミングが重要。
+macOS IMKit では、preedit がない状態（Empty → Empty 直接コミット）で
+`insertText()` の直後に `setMarkedText("")` を呼ぶと、
+insertText がキャンセルされてしまう場合がある。
+
+対策: `hasPreedit: Bool` フラグで、実際に marked text を設定したときのみ
+`setMarkedText("")` を呼ぶ:
+
+```swift
+private var hasPreedit: Bool = false
+
+// preedit 設定時
+if preeditText.isEmpty {
+    if hasPreedit {
+        c.setMarkedText?(
+            "",
+            selectionRange: NSRange(location: 0, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+        hasPreedit = false
+    }
+} else {
+    hasPreedit = true
+    // ... attributed string を生成して setMarkedText を呼ぶ ...
+}
+```
+
+リセット箇所:
+- `deactivateServer(_:)` 内で `hasPreedit = false`
+- `forceCommit()` 内で `hasPreedit = false`
+
+### テスト済み
+
+- `?`, `!`, `.`, `,`, `/`, `~`, `[`, `]` など記号の即座コミット
+- ひらがな入力後の記号 (`a?` → `あ？`) は preedit に含まれる
+- アルファベット入力は通常通り preedit に蓄積
+- 全 138 テスト合格
+
+---
+
 ## Phase 6 への引き継ぎ
 
 ### SwiftUI 独立設定アプリ
