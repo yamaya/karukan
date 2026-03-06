@@ -197,6 +197,17 @@ enum SessionState {
     Conversion(ConversionState),
 }
 
+/// Ctrl+J/K/; プレビューモード。
+///
+/// ライブ変換中に Ctrl+J/K/; を初めて押すとプレビュー表示になり、
+/// 同じキーをもう一度押すと確定する。別のキーを押すとモードが切り替わる。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConvertPreview {
+    Hiragana,
+    Katakana,
+    Ascii,
+}
+
 // ---------------------------------------------------------------------------
 // KarukanSession
 // ---------------------------------------------------------------------------
@@ -231,6 +242,9 @@ pub struct KarukanSession {
     /// これにより "なでし" 推論結果が適用された後に 'o' を追加して "なでしこ" になっても、
     /// Return で "なでし" がコミットされるバグを防ぐ。
     live_candidate_source: String,
+    /// Ctrl+J/K/; のプレビュー状態。
+    /// ライブ変換中に Ctrl+J/K/; を押すとまずプレビュー表示し、同じキーをもう一度押すと確定する。
+    convert_preview: Option<ConvertPreview>,
     /// Preedit state exposed to FFI.
     pub(crate) preedit: PreeditCache,
     /// Commit state exposed to FFI.
@@ -256,6 +270,7 @@ impl KarukanSession {
             converter: None,
             live_candidate: None,
             live_candidate_source: String::new(),
+            convert_preview: None,
             preedit: PreeditCache::default(),
             commit: CommitCache::default(),
             candidate_cache: CandidateCache::default(),
@@ -498,6 +513,7 @@ impl KarukanSession {
     /// printable input while composing or when starting composition).
     pub fn push_char(&mut self, ch: char) -> bool {
         self.clear_flags();
+        self.convert_preview = None;
 
         // ライブ変換結果が残っていれば、推論完了まで表示ベースとして使い続ける。
         // clone() で参照し live_candidate は保持する。apply_live_candidate() が
@@ -574,13 +590,18 @@ impl KarukanSession {
             // Space → 全角スペース (U+3000) をコミット（preedit なし時の標準日本語 IME 動作）。
             // その他のキーはアプリにパススルー。
             KarukanKey::Space if matches!(self.state, SessionState::Empty) => {
+                self.convert_preview = None;
                 self.commit.text = CString::new("\u{3000}").unwrap_or_default();
                 self.commit.dirty = true;
                 true
             }
-            _ if matches!(self.state, SessionState::Empty) => false,
+            _ if matches!(self.state, SessionState::Empty) => {
+                self.convert_preview = None;
+                false
+            }
 
             // ── Convert shortcuts (Composing + Conversion) ───────────────
+            // convert_preview は do_convert 内で管理する
             KarukanKey::ConvertHiragana => {
                 self.do_convert_hiragana();
                 true
@@ -679,6 +700,7 @@ impl KarukanSession {
     /// ライブ変換中（live_candidate が Some）の場合は変換済みテキストをコミットし、
     /// 学習キャッシュに記録する（karukan-im の commit_composing と同じ動作）。
     fn do_commit(&mut self) {
+        self.convert_preview = None;
         let prev_len = self.romaji.output().chars().count();
         let _ = self.romaji.flush();
         let flushed: String = self.romaji.output().chars().skip(prev_len).collect();
@@ -722,6 +744,7 @@ impl KarukanSession {
     ///   1回目 Escape: live_candidate をクリアしてひらがな表示に戻る（karukan-im と同じ）
     ///   2回目 Escape: 全キャンセル
     fn do_cancel(&mut self) {
+        self.convert_preview = None;
         if self.live_candidate.take().is_some() {
             // 1回目: ひらがな表示に戻るだけ（入力はキャンセルしない）
             let preedit_text = format!("{}{}", self.input_buf.text, self.romaji.buffer());
@@ -737,6 +760,7 @@ impl KarukanSession {
 
     /// Handle a Backspace key press.
     fn do_backspace(&mut self) {
+        self.convert_preview = None;
         match self.romaji.backspace() {
             BackspaceResult::RemovedBuffer(_) => {
                 // Removed from pending romaji buffer only; input_buf unchanged.
@@ -798,58 +822,74 @@ impl KarukanSession {
         }
     }
 
-    /// Ctrl+J: ひらがなのまま確定。
+    /// Ctrl+J/K/; 共通: プレビュー → 確定の2段階処理。
+    ///
+    /// - ライブ変換中 or 別モードのプレビュー中 → プレビュー表示のみ（確定しない）
+    /// - 同じモードのプレビュー中 or ライブ変換なし → 確定
+    fn do_convert(&mut self, mode: ConvertPreview) {
+        self.restore_hiragana_if_conversion();
+
+        // ライブ変換中 or 別モードプレビュー中 → プレビュー表示のみ
+        let should_preview =
+            self.live_candidate.is_some() || matches!(self.convert_preview, Some(m) if m != mode);
+
+        if should_preview {
+            self.live_candidate = None;
+            self.convert_preview = Some(mode);
+            let preedit_text = match mode {
+                ConvertPreview::Hiragana => {
+                    format!("{}{}", self.input_buf.text, self.romaji.buffer())
+                }
+                ConvertPreview::Katakana => {
+                    let katakana =
+                        karukan_engine::kana::hiragana_to_katakana(&self.input_buf.text);
+                    format!("{}{}", katakana, self.romaji.buffer())
+                }
+                ConvertPreview::Ascii => {
+                    let romaji = hiragana_to_romaji(&self.input_buf.text);
+                    format!("{}{}", romaji, self.romaji.buffer())
+                }
+            };
+            self.update_preedit(&preedit_text);
+            return;
+        }
+
+        // 同じモード2回目 or ライブ変換なし → 確定
+        self.convert_preview = None;
+        self.flush_romaji();
+        if self.input_buf.text.is_empty() {
+            return;
+        }
+
+        let committed = match mode {
+            ConvertPreview::Hiragana => std::mem::take(&mut self.input_buf.text),
+            ConvertPreview::Katakana => {
+                karukan_engine::kana::hiragana_to_katakana(&self.input_buf.text)
+            }
+            ConvertPreview::Ascii => hiragana_to_romaji(&self.input_buf.text),
+        };
+        self.live_candidate = None;
+        self.input_buf.clear();
+        self.romaji.reset();
+        self.state = SessionState::Empty;
+        self.commit.text = CString::new(committed).unwrap_or_default();
+        self.commit.dirty = true;
+        self.update_preedit("");
+    }
+
+    /// Ctrl+J: ひらがなのまま確定（ライブ変換中はプレビュー→確定の2段階）。
     fn do_convert_hiragana(&mut self) {
-        self.restore_hiragana_if_conversion();
-        self.flush_romaji();
-        if self.input_buf.text.is_empty() {
-            return;
-        }
-
-        let text = std::mem::take(&mut self.input_buf.text);
-        self.live_candidate = None;
-        self.input_buf.cursor_chars = 0;
-        self.romaji.reset();
-        self.state = SessionState::Empty;
-        self.commit.text = CString::new(text).unwrap_or_default();
-        self.commit.dirty = true;
-        self.update_preedit("");
+        self.do_convert(ConvertPreview::Hiragana);
     }
 
-    /// Ctrl+K: カタカナに変換して確定。
+    /// Ctrl+K: カタカナに変換して確定（ライブ変換中はプレビュー→確定の2段階）。
     fn do_convert_katakana(&mut self) {
-        self.restore_hiragana_if_conversion();
-        self.flush_romaji();
-        if self.input_buf.text.is_empty() {
-            return;
-        }
-
-        let katakana = karukan_engine::kana::hiragana_to_katakana(&self.input_buf.text);
-        self.live_candidate = None;
-        self.input_buf.clear();
-        self.romaji.reset();
-        self.state = SessionState::Empty;
-        self.commit.text = CString::new(katakana).unwrap_or_default();
-        self.commit.dirty = true;
-        self.update_preedit("");
+        self.do_convert(ConvertPreview::Katakana);
     }
 
-    /// Ctrl+;: 半角英数（ローマ字）に逆変換して確定。
+    /// Ctrl+;: 半角英数に逆変換して確定（ライブ変換中はプレビュー→確定の2段階）。
     fn do_convert_ascii(&mut self) {
-        self.restore_hiragana_if_conversion();
-        self.flush_romaji();
-        if self.input_buf.text.is_empty() {
-            return;
-        }
-
-        let romaji = hiragana_to_romaji(&self.input_buf.text);
-        self.live_candidate = None;
-        self.input_buf.clear();
-        self.romaji.reset();
-        self.state = SessionState::Empty;
-        self.commit.text = CString::new(romaji).unwrap_or_default();
-        self.commit.dirty = true;
-        self.update_preedit("");
+        self.do_convert(ConvertPreview::Ascii);
     }
 
     // -----------------------------------------------------------------------
@@ -861,6 +901,7 @@ impl KarukanSession {
     /// ライブ変換結果（live_candidate）があれば候補リストの先頭に保存する
     /// （karukan-im の start_conversion における prev_suggest_text と同じ処理）。
     fn do_conversion(&mut self) {
+        self.convert_preview = None;
         // Flush pending romaji (e.g. lone "k" → "k" pass-through).
         let prev_len = self.romaji.output().chars().count();
         let _ = self.romaji.flush();
@@ -1707,6 +1748,128 @@ mod tests {
         // "k" should be flushed and committed
         assert_eq!(s.commit.text.to_str().unwrap(), "k");
         assert!(s.is_empty());
+    }
+
+    // ── Live conversion + Ctrl+J/K two-step tests ──
+
+    #[test]
+    fn test_convert_hiragana_cancels_live_first() {
+        let mut s = KarukanSession::new();
+        "nihongo".chars().for_each(|c| { s.push_char(c); });
+        // Simulate live conversion
+        s.live_candidate = Some("日本語".to_string());
+        s.live_candidate_source = s.input_buf.text.clone();
+
+        // 1st Ctrl+J: cancel live, show hiragana preedit (no commit)
+        s.push_key(KarukanKey::ConvertHiragana);
+        assert!(!s.commit.dirty, "1st Ctrl+J should not commit");
+        assert!(s.live_candidate.is_none(), "live_candidate should be cleared");
+        assert_eq!(s.preedit.text.to_str().unwrap(), "にほんご");
+        assert!(!s.is_empty(), "should remain in Composing");
+
+        // 2nd Ctrl+J: commit hiragana
+        s.push_key(KarukanKey::ConvertHiragana);
+        assert!(s.commit.dirty, "2nd Ctrl+J should commit");
+        assert_eq!(s.commit.text.to_str().unwrap(), "にほんご");
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn test_convert_katakana_cancels_live_first() {
+        let mut s = KarukanSession::new();
+        "nihongo".chars().for_each(|c| { s.push_char(c); });
+        s.live_candidate = Some("日本語".to_string());
+        s.live_candidate_source = s.input_buf.text.clone();
+
+        // 1st Ctrl+K: cancel live, show katakana preedit (no commit)
+        s.push_key(KarukanKey::ConvertKatakana);
+        assert!(!s.commit.dirty, "1st Ctrl+K should not commit");
+        assert!(s.live_candidate.is_none());
+        assert_eq!(s.preedit.text.to_str().unwrap(), "ニホンゴ");
+        assert!(!s.is_empty(), "should remain in Composing");
+
+        // 2nd Ctrl+K: commit katakana
+        s.push_key(KarukanKey::ConvertKatakana);
+        assert!(s.commit.dirty, "2nd Ctrl+K should commit");
+        assert_eq!(s.commit.text.to_str().unwrap(), "ニホンゴ");
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn test_convert_hiragana_no_live_commits_immediately() {
+        // Without live conversion, Ctrl+J should commit immediately (no change)
+        let mut s = KarukanSession::new();
+        "nihongo".chars().for_each(|c| { s.push_char(c); });
+        assert!(s.live_candidate.is_none());
+        s.push_key(KarukanKey::ConvertHiragana);
+        assert!(s.commit.dirty);
+        assert_eq!(s.commit.text.to_str().unwrap(), "にほんご");
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn test_convert_mode_switch_j_then_k() {
+        // 日本語 (live) → Ctrl+J → にほんご (preedit) → Ctrl+K → ニホンゴ (preedit, NOT commit)
+        let mut s = KarukanSession::new();
+        "nihongo".chars().for_each(|c| { s.push_char(c); });
+        s.live_candidate = Some("日本語".to_string());
+        s.live_candidate_source = s.input_buf.text.clone();
+
+        // Ctrl+J: cancel live, show hiragana preedit
+        s.push_key(KarukanKey::ConvertHiragana);
+        assert!(!s.commit.dirty);
+        assert_eq!(s.preedit.text.to_str().unwrap(), "にほんご");
+
+        // Ctrl+K: switch to katakana preedit (should NOT commit)
+        s.push_key(KarukanKey::ConvertKatakana);
+        assert!(!s.commit.dirty, "mode switch should not commit");
+        assert_eq!(s.preedit.text.to_str().unwrap(), "ニホンゴ");
+        assert!(!s.is_empty());
+
+        // Ctrl+K again: now commit katakana
+        s.push_key(KarukanKey::ConvertKatakana);
+        assert!(s.commit.dirty);
+        assert_eq!(s.commit.text.to_str().unwrap(), "ニホンゴ");
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn test_convert_mode_switch_k_then_j() {
+        let mut s = KarukanSession::new();
+        "nihongo".chars().for_each(|c| { s.push_char(c); });
+        s.live_candidate = Some("日本語".to_string());
+        s.live_candidate_source = s.input_buf.text.clone();
+
+        // Ctrl+K → Ctrl+J → Ctrl+J で確定
+        s.push_key(KarukanKey::ConvertKatakana);
+        assert!(!s.commit.dirty);
+        assert_eq!(s.preedit.text.to_str().unwrap(), "ニホンゴ");
+
+        s.push_key(KarukanKey::ConvertHiragana);
+        assert!(!s.commit.dirty);
+        assert_eq!(s.preedit.text.to_str().unwrap(), "にほんご");
+
+        s.push_key(KarukanKey::ConvertHiragana);
+        assert!(s.commit.dirty);
+        assert_eq!(s.commit.text.to_str().unwrap(), "にほんご");
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn test_convert_preview_cleared_by_char_input() {
+        let mut s = KarukanSession::new();
+        "nihongo".chars().for_each(|c| { s.push_char(c); });
+        s.live_candidate = Some("日本語".to_string());
+        s.live_candidate_source = s.input_buf.text.clone();
+
+        // Ctrl+J: enter preview mode
+        s.push_key(KarukanKey::ConvertHiragana);
+        assert!(!s.commit.dirty);
+        assert!(s.convert_preview.is_some());
+
+        // Type a char: preview should be cleared, back to normal composing
+        s.push_char('g');
+        assert!(s.convert_preview.is_none());
     }
 
     // ── Reverse romaji table tests ──
