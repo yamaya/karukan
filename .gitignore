@@ -25,8 +25,9 @@ target/
 *.swp
 *.swo
 
-# Claude Code
-.claude/
+# Claude Code — local settings only, rules are tracked
+.claude/*
+!.claude/rules/
 
 build
 *.bin
