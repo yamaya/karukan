@@ -33,6 +33,12 @@ final class KarukanInputController: IMKInputController {
     /// バックグラウンドで init 後、メインスレッドで true に設定される。
     private var initialized: Bool = false
 
+    /// setMarkedText で非空テキストをセットした状態かどうか。
+    /// setMarkedText("") の呼び出しを「実際に marked text がある場合のみ」に制限するために使う。
+    /// Empty 状態からの直接コミット（auto-commit）では setMarkedText("") を呼ぶと
+    /// 直前の insertText がキャンセルされる app があるため。
+    private var hasPreedit: Bool = false
+
     // -----------------------------------------------------------------------
     // MARK: - Lifecycle
     // -----------------------------------------------------------------------
@@ -128,6 +134,7 @@ final class KarukanInputController: IMKInputController {
         if karukan_is_empty(session) == 0 {
             forceCommit(client: sender)
         }
+        hasPreedit = false
         // 学習キャッシュを永続化
         karukan_save_learning(session)
         super.deactivateServer(sender)
@@ -165,12 +172,16 @@ final class KarukanInputController: IMKInputController {
         let caretBytes  = Int(karukan_get_preedit_caret(session))
 
         if preeditText.isEmpty {
-            // preedit をクリア
-            c.setMarkedText?(
-                "",
-                selectionRange: NSRange(location: 0, length: 0),
-                replacementRange: NSRange(location: NSNotFound, length: 0)
-            )
+            // hasPreedit のときのみ setMarkedText("") を呼ぶ。
+            // marked text がない状態で呼ぶと直前の insertText がキャンセルされる app がある。
+            if hasPreedit {
+                c.setMarkedText?(
+                    "",
+                    selectionRange: NSRange(location: 0, length: 0),
+                    replacementRange: NSRange(location: NSNotFound, length: 0)
+                )
+                hasPreedit = false
+            }
         } else {
             // バイトオフセット → 文字数インデックス変換
             // ASCII ローマ字入力（Phase 2）では 1 byte = 1 char なので誤差なし。
@@ -190,6 +201,7 @@ final class KarukanInputController: IMKInputController {
                 range: fullRange
             )
 
+            hasPreedit = true
             logger.debug("setMarkedText: '\(preeditText)' caret=\(cursorCharIndex)")
             c.setMarkedText?(
                 attrStr,
@@ -220,6 +232,7 @@ final class KarukanInputController: IMKInputController {
             selectionRange: NSRange(location: 0, length: 0),
             replacementRange: NSRange(location: NSNotFound, length: 0)
         )
+        hasPreedit = false
     }
 }
 
