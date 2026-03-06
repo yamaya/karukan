@@ -214,6 +214,8 @@ pub struct KarukanSession {
     input_buf: InputBuffer,
     /// Optional system dictionary (loaded by `init_resources`).
     dict: Option<karukan_engine::Dictionary>,
+    /// Optional user dictionary (loaded by `init_resources` from `user_dicts/`).
+    user_dict: Option<karukan_engine::Dictionary>,
     /// Optional learning cache (loaded by `init_resources`).
     learning: Option<LearningCache>,
     /// Shared kanji converter (loaded once per process, reused by all sessions).
@@ -249,6 +251,7 @@ impl KarukanSession {
             romaji: RomajiConverter::new(),
             input_buf: InputBuffer::new(),
             dict: None,
+            user_dict: None,
             learning: None,
             converter: None,
             live_candidate: None,
@@ -275,6 +278,46 @@ impl KarukanSession {
                     self.dict = Some(d);
                 }
                 Err(e) => tracing::warn!("Failed to load system dictionary: {}", e),
+            }
+        }
+
+        // User dictionaries (optional — scan user_dicts/ directory)
+        let user_dict_dir = paths::user_dict_dir();
+        if user_dict_dir.exists() {
+            if let Ok(entries) = std::fs::read_dir(&user_dict_dir) {
+                let mut paths: Vec<std::path::PathBuf> = entries
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.path())
+                    .filter(|p| p.is_file())
+                    .collect();
+                paths.sort();
+
+                let mut dicts = Vec::new();
+                for path in &paths {
+                    match karukan_engine::Dictionary::load_auto(path) {
+                        Ok(dict) => {
+                            tracing::info!("Loaded user dictionary from {:?}", path);
+                            dicts.push(dict);
+                        }
+                        Err(e) => {
+                            tracing::warn!("Failed to load user dictionary {:?}: {}", path, e)
+                        }
+                    }
+                }
+
+                if !dicts.is_empty() {
+                    match karukan_engine::Dictionary::merge(dicts) {
+                        Ok(Some(merged)) => {
+                            tracing::info!(
+                                "User dictionaries merged ({} files)",
+                                paths.len()
+                            );
+                            self.user_dict = Some(merged);
+                        }
+                        Ok(None) => {}
+                        Err(e) => tracing::warn!("Failed to merge user dictionaries: {}", e),
+                    }
+                }
             }
         }
 
@@ -390,6 +433,9 @@ impl KarukanSession {
     /// 新しいライブ変換サイクルの開始を意味するため、clear_flags() で前サイクルの
     /// dirty フラグ（特に commit.dirty）をクリアする。これにより、文節分割コミット後の
     /// 残余ひらがなの推論完了時に前のコミットテキストが重複送信されるバグを防ぐ。
+    ///
+    /// モデル結果よりも学習キャッシュ・ユーザー辞書を優先する。
+    /// 優先度: Learning → User Dictionary → Model
     pub fn apply_live_candidate(&mut self, candidate: &str, source: &str) {
         if !matches!(self.state, SessionState::Composing) {
             return;
@@ -399,13 +445,18 @@ impl KarukanSession {
             return;
         }
         self.clear_flags();
-        self.live_candidate = Some(candidate.to_string());
+
+        // Learning → User Dictionary → Model の優先度で候補を決定。
+        let effective = self
+            .lookup_live_override(source)
+            .unwrap_or_else(|| candidate.to_string());
+        self.live_candidate = Some(effective.clone());
         self.live_candidate_source = source.to_string();
         // preedit = 変換済みテキスト + 未確定ローマ字バッファ
         // 例: candidate="日本語", romaji.buffer()="h" → preedit="日本語h"
         // karukan-im の set_composing_state() が live.text + romaji buffer を合成するのと同じ。
         let romaji_buf = self.romaji.buffer().to_string();
-        let preedit_text = format!("{}{}", candidate, romaji_buf);
+        let preedit_text = format!("{}{}", effective, romaji_buf);
         self.preedit.text = CString::new(preedit_text.as_str()).unwrap_or_default();
         // キャレットは preedit 末尾（ローマ字バッファの後ろ）
         self.preedit.caret_bytes = preedit_text.len() as u32;
@@ -925,7 +976,32 @@ impl KarukanSession {
         self.update_preedit(&hiragana);
     }
 
-    /// Collect conversion candidates: Learning → Model → Dict.
+    /// ライブ変換でモデル結果よりも優先する候補を返す。
+    ///
+    /// 学習キャッシュ → ユーザー辞書の順で検索し、最初に見つかった候補を返す。
+    /// どちらにもなければ `None`（モデル結果をそのまま使う）。
+    fn lookup_live_override(&self, hiragana: &str) -> Option<String> {
+        // 1. Learning cache (highest priority)
+        if let Some(cache) = &self.learning {
+            let results = cache.lookup(hiragana);
+            if let Some((surface, _score)) = results.first() {
+                return Some(surface.clone());
+            }
+        }
+
+        // 2. User dictionary
+        if let Some(dict) = &self.user_dict {
+            if let Some(lr) = dict.exact_match_search(hiragana) {
+                if let Some(c) = lr.candidates.first() {
+                    return Some(c.surface.clone());
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Collect conversion candidates: Learning → User Dict → Model → System Dict.
     fn collect_candidates(&self, hiragana: &str) -> Vec<String> {
         let mut result: Vec<String> = Vec::new();
 
@@ -938,7 +1014,18 @@ impl KarukanSession {
             }
         }
 
-        // 2. Neural model candidates (beam search, up to 9).
+        // 2. User dictionary (higher than model/system dict).
+        if let Some(dict) = &self.user_dict {
+            if let Some(lr) = dict.exact_match_search(hiragana) {
+                for c in lr.candidates {
+                    if !result.contains(&c.surface) {
+                        result.push(c.surface.clone());
+                    }
+                }
+            }
+        }
+
+        // 3. Neural model candidates (beam search, up to 9).
         if let Some(conv) = &self.converter {
             match conv.convert(hiragana, "", 9) {
                 Ok(model_cands) => {
@@ -952,7 +1039,7 @@ impl KarukanSession {
             }
         }
 
-        // 3. System dictionary (fallback).
+        // 4. System dictionary (fallback).
         if let Some(dict) = &self.dict {
             if let Some(lr) = dict.exact_match_search(hiragana) {
                 for c in lr.candidates.iter().take(5) {
@@ -1898,5 +1985,186 @@ mod tests {
         let mut s = KarukanSession::new();
         s.push_char('a'); // Composing 状態
         assert!(!s.select_candidate(0)); // Conversion でない → false
+    }
+
+    // ── User dictionary tests ──
+
+    /// Helper: create a temp dir with user_dicts/ containing a TSV file.
+    fn setup_user_dict_env(entries: &[(&str, &str)]) -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        let user_dicts = tmp.path().join("user_dicts");
+        std::fs::create_dir_all(&user_dicts).unwrap();
+
+        let mut content = String::from("# test user dictionary\n");
+        for (reading, surface) in entries {
+            content.push_str(&format!("{}\t{}\n", reading, surface));
+        }
+        std::fs::write(user_dicts.join("test.tsv"), &content).unwrap();
+
+        // Point KARUKAN_DATA_DIR to our temp dir
+        unsafe { std::env::set_var("KARUKAN_DATA_DIR", tmp.path()) };
+        tmp
+    }
+
+    #[test]
+    fn test_user_dict_loaded() {
+        let _tmp = setup_user_dict_env(&[("かるかん", "Karukan"), ("てすと", "TestWord")]);
+
+        let mut s = KarukanSession::new();
+        s.init_resources();
+
+        assert!(s.user_dict.is_some(), "user_dict should be loaded");
+
+        unsafe { std::env::remove_var("KARUKAN_DATA_DIR") };
+    }
+
+    #[test]
+    fn test_user_dict_candidates_appear() {
+        let _tmp = setup_user_dict_env(&[("かるかん", "Karukan")]);
+
+        let mut s = KarukanSession::new();
+        s.init_resources();
+
+        let candidates = s.collect_candidates("かるかん");
+        assert!(
+            candidates.contains(&"Karukan".to_string()),
+            "user dict entry should appear in candidates: {:?}",
+            candidates
+        );
+
+        unsafe { std::env::remove_var("KARUKAN_DATA_DIR") };
+    }
+
+    #[test]
+    fn test_user_dict_priority_over_system_dict() {
+        let _tmp = setup_user_dict_env(&[("あ", "UserA")]);
+
+        let mut s = KarukanSession::new();
+        s.init_resources();
+
+        let candidates = s.collect_candidates("あ");
+        // User dict entry should come before hiragana fallback
+        let user_pos = candidates.iter().position(|c| c == "UserA");
+        let fallback_pos = candidates.iter().position(|c| c == "あ");
+        assert!(
+            user_pos.is_some(),
+            "UserA should be in candidates: {:?}",
+            candidates
+        );
+        if let (Some(u), Some(f)) = (user_pos, fallback_pos) {
+            assert!(u < f, "user dict should come before fallback");
+        }
+
+        unsafe { std::env::remove_var("KARUKAN_DATA_DIR") };
+    }
+
+    #[test]
+    fn test_user_dict_empty_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let user_dicts = tmp.path().join("user_dicts");
+        std::fs::create_dir_all(&user_dicts).unwrap();
+        // No files in user_dicts/
+
+        unsafe { std::env::set_var("KARUKAN_DATA_DIR", tmp.path()) };
+
+        let mut s = KarukanSession::new();
+        s.init_resources();
+        assert!(s.user_dict.is_none(), "no files → user_dict should be None");
+
+        unsafe { std::env::remove_var("KARUKAN_DATA_DIR") };
+    }
+
+    #[test]
+    fn test_user_dict_no_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Don't create user_dicts/ at all
+
+        unsafe { std::env::set_var("KARUKAN_DATA_DIR", tmp.path()) };
+
+        let mut s = KarukanSession::new();
+        s.init_resources();
+        assert!(
+            s.user_dict.is_none(),
+            "missing dir → user_dict should be None"
+        );
+
+        unsafe { std::env::remove_var("KARUKAN_DATA_DIR") };
+    }
+
+    // ── Live conversion + user dictionary tests ──
+
+    #[test]
+    fn test_live_conversion_uses_user_dict() {
+        let _tmp = setup_user_dict_env(&[("かるかん", "Karukan")]);
+
+        let mut s = KarukanSession::new();
+        s.init_resources();
+
+        // Simulate typing "かるかん" → Composing state
+        s.input_buf.insert("かるかん");
+        s.state = SessionState::Composing;
+        s.update_preedit("かるかん");
+
+        // Model returns something generic, but user dict should override
+        s.apply_live_candidate("軽羹", "かるかん");
+
+        assert_eq!(
+            s.live_candidate.as_deref(),
+            Some("Karukan"),
+            "user dict should override model result in live conversion"
+        );
+
+        unsafe { std::env::remove_var("KARUKAN_DATA_DIR") };
+    }
+
+    #[test]
+    fn test_live_conversion_model_result_when_no_user_dict_match() {
+        let _tmp = setup_user_dict_env(&[("かるかん", "Karukan")]);
+
+        let mut s = KarukanSession::new();
+        s.init_resources();
+
+        // Simulate typing "にほんご"
+        s.input_buf.insert("にほんご");
+        s.state = SessionState::Composing;
+        s.update_preedit("にほんご");
+
+        // No user dict match for "にほんご" → model result used as-is
+        s.apply_live_candidate("日本語", "にほんご");
+
+        assert_eq!(
+            s.live_candidate.as_deref(),
+            Some("日本語"),
+            "model result should be used when no user dict match"
+        );
+
+        unsafe { std::env::remove_var("KARUKAN_DATA_DIR") };
+    }
+
+    #[test]
+    fn test_live_conversion_learning_overrides_user_dict() {
+        let _tmp = setup_user_dict_env(&[("かるかん", "Karukan")]);
+
+        let mut s = KarukanSession::new();
+        s.init_resources();
+
+        // Record a learning entry that should take priority over user dict
+        if let Some(cache) = &mut s.learning {
+            cache.record("かるかん", "軽羹");
+        }
+
+        s.input_buf.insert("かるかん");
+        s.state = SessionState::Composing;
+        s.update_preedit("かるかん");
+
+        s.apply_live_candidate("something", "かるかん");
+
+        assert_eq!(
+            s.live_candidate.as_deref(),
+            Some("軽羹"),
+            "learning cache should override user dict in live conversion"
+        );
+
+        unsafe { std::env::remove_var("KARUKAN_DATA_DIR") };
     }
 }
