@@ -977,3 +977,58 @@ fn test_space_on_composing_does_not_commit_fullwidth_space_ffi() {
         "Space in Composing should not commit fullwidth space"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 句読点の即コミット（行頭 = Empty 状態）
+// ---------------------------------------------------------------------------
+
+/// Empty 状態で「?」を入力すると preedit を経由せず「？」が即コミットされる。
+#[test]
+fn test_question_mark_auto_commits_in_empty_state() {
+    let s = TestSession::new();
+    assert!(s.is_empty());
+    s.push_char("?");
+    // preedit なし、即コミット
+    assert_eq!(s.preedit(), "");
+    assert!(s.has_commit(), "？ should be committed immediately");
+    assert_eq!(s.commit_text(), "？");
+    assert!(s.is_empty(), "state should return to Empty");
+}
+
+/// Composing 状態（ひらがなあり）で「?」を入力すると preedit に追記される。
+#[test]
+fn test_question_mark_stays_in_preedit_after_hiragana() {
+    let s = TestSession::new();
+    s.push_char("a"); // "あ"
+    s.push_char("?");
+    // コミットなし、preedit に「あ？」
+    assert!(!s.has_commit());
+    assert_eq!(s.preedit(), "あ？");
+}
+
+/// Empty 状態で各種句読点が即コミットされる。
+#[test]
+fn test_punctuation_auto_commits_in_empty_state() {
+    let pairs = [
+        (".", "。"),
+        (",", "、"),
+        ("/", "・"),
+        ("!", "！"),
+        ("~", "〜"),
+        ("[", "「"),
+        ("]", "」"),
+    ];
+    for (input, expected) in pairs {
+        let s = TestSession::new();
+        s.push_char(input);
+        assert_eq!(
+            s.commit_text(),
+            expected,
+            "input '{}' should auto-commit '{}'",
+            input,
+            expected
+        );
+        assert_eq!(s.preedit(), "", "preedit should be empty for '{}'", input);
+        assert!(s.is_empty(), "state should be Empty after '{}'", input);
+    }
+}

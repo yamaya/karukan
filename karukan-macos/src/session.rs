@@ -515,6 +515,11 @@ impl KarukanSession {
         self.clear_flags();
         self.convert_preview = None;
 
+        // Empty 状態で句読点・記号が入力された場合の即コミット判定。
+        // 標準的な日本語 IME（macOS 内蔵・Google IME 等）の動作に合わせ、
+        // preedit なしで直接コミットする（→ preedit に入らないため Enter 不要）。
+        let started_empty = matches!(self.state, SessionState::Empty);
+
         // ライブ変換結果が残っていれば、推論完了まで表示ベースとして使い続ける。
         // clone() で参照し live_candidate は保持する。apply_live_candidate() が
         // 新しい結果で上書きするか、do_commit/do_cancel で消費される。
@@ -542,6 +547,25 @@ impl KarukanSession {
             .collect();
         if !new_hiragana.is_empty() {
             self.input_buf.insert(&new_hiragana);
+        }
+
+        // Empty 状態で入力された文字が「ひらがな以外の単一文字」に変換された場合、
+        // preedit を経由せず即コミットする。対象: 句読点（。、？！・〜）・括弧・記号等。
+        // ひらがな（あ〜ん、ー含む）は preedit に入れて変換候補を選ぶ通常フローへ。
+        // romaji_buf が空 = バッファに未確定子音がない（完全変換済み）。
+        let romaji_buf_check = self.romaji.buffer();
+        if started_empty
+            && romaji_buf_check.is_empty()
+            && new_hiragana.chars().count() == 1
+            && !is_hiragana_char(new_hiragana.chars().next().unwrap())
+        {
+            self.commit.text = CString::new(new_hiragana.as_str()).unwrap_or_default();
+            self.commit.dirty = true;
+            self.romaji.reset();
+            self.input_buf.clear();
+            self.state = SessionState::Empty;
+            self.update_preedit("");
+            return true;
         }
 
         // Build preedit:
@@ -1121,6 +1145,16 @@ impl Default for KarukanSession {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// ---------------------------------------------------------------------------
+// Hiragana range check
+// ---------------------------------------------------------------------------
+
+/// U+3041–U+3096（ぁ〜ゖ）、U+309D–U+309F（ゝゞ等）、U+30FC（ー）を
+/// ひらがなとみなす。句読点・記号・カタカナ等はひらがなではないため false を返す。
+fn is_hiragana_char(c: char) -> bool {
+    matches!(c, '\u{3041}'..='\u{3096}' | '\u{309D}'..='\u{309F}' | '\u{30FC}')
 }
 
 // ---------------------------------------------------------------------------
