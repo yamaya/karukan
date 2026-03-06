@@ -131,53 +131,59 @@ KARUKAN_KEY_CONVERT_KATAKANA  = 11,
 KARUKAN_KEY_CONVERT_ASCII     = 12,
 ```
 
-#### `session.rs` — 変換コミット処理
+#### `session.rs` — 変換コミット処理（プレビューモード対応）
+
+ライブ変換中に Ctrl+J/K/; を押すと即コミットせず、まずプレビュー表示（preedit をひらがな/カタカナ/英数に切替）する。同じキーをもう一度押すと確定する。異なるキーを押すとモードが切り替わる（Escape の2段階動作と同じ思想）。
 
 ```rust
-fn do_convert_hiragana(&mut self) {
-    // romaji フラッシュ → input_buf.text をそのままコミット
-    self.flush_romaji();
-    if self.input_buf.text.is_empty() { return; }
-
-    let text = std::mem::take(&mut self.input_buf.text);
-    self.live_candidate = None;
-    self.input_buf.cursor_chars = 0;
-    self.romaji.reset();
-    self.state = SessionState::Empty;
-    self.commit.text = CString::new(text).unwrap_or_default();
-    self.commit.dirty = true;
-    self.update_preedit("");
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConvertPreview {
+    Hiragana,
+    Katakana,
+    Ascii,
 }
 
-fn do_convert_katakana(&mut self) {
+/// Ctrl+J/K/; 共通: プレビュー → 確定の2段階処理。
+fn do_convert(&mut self, mode: ConvertPreview) {
+    self.restore_hiragana_if_conversion();
+
+    // ライブ変換中 or 別モードプレビュー中 → プレビュー表示のみ
+    let should_preview =
+        self.live_candidate.is_some() || matches!(self.convert_preview, Some(m) if m != mode);
+
+    if should_preview {
+        self.live_candidate = None;
+        self.convert_preview = Some(mode);
+        let preedit_text = match mode {
+            ConvertPreview::Hiragana => format!("{}{}", self.input_buf.text, self.romaji.buffer()),
+            ConvertPreview::Katakana => {
+                let katakana = karukan_engine::kana::hiragana_to_katakana(&self.input_buf.text);
+                format!("{}{}", katakana, self.romaji.buffer())
+            }
+            ConvertPreview::Ascii => {
+                let romaji = hiragana_to_romaji(&self.input_buf.text);
+                format!("{}{}", romaji, self.romaji.buffer())
+            }
+        };
+        self.update_preedit(&preedit_text);
+        return;
+    }
+
+    // 同じモード2回目 or ライブ変換なし → 確定
+    self.convert_preview = None;
     self.flush_romaji();
     if self.input_buf.text.is_empty() { return; }
 
-    let katakana = karukan_engine::kana::hiragana_to_katakana(&self.input_buf.text);
-    self.live_candidate = None;
-    self.input_buf.clear();
-    self.romaji.reset();
-    self.state = SessionState::Empty;
-    self.commit.text = CString::new(katakana).unwrap_or_default();
-    self.commit.dirty = true;
-    self.update_preedit("");
-}
-
-fn do_convert_ascii(&mut self) {
-    self.flush_romaji();
-    if self.input_buf.text.is_empty() { return; }
-
-    // ひらがな→ローマ字逆変換（最長一致）
-    let romaji = self.hiragana_to_romaji(&self.input_buf.text);
-    self.live_candidate = None;
-    self.input_buf.clear();
-    self.romaji.reset();
-    self.state = SessionState::Empty;
-    self.commit.text = CString::new(romaji).unwrap_or_default();
-    self.commit.dirty = true;
-    self.update_preedit("");
+    let committed = match mode {
+        ConvertPreview::Hiragana => std::mem::take(&mut self.input_buf.text),
+        ConvertPreview::Katakana => hiragana_to_katakana(&self.input_buf.text),
+        ConvertPreview::Ascii => hiragana_to_romaji(&self.input_buf.text),
+    };
+    // ... clear + commit ...
 }
 ```
+
+`convert_preview` は文字入力・Enter・Escape・Backspace・Space でクリアされる。
 
 #### `session.rs` — ひらがな→ローマ字逆変換テーブル
 
@@ -296,12 +302,14 @@ case convertAscii    = 12
 ### テスト要件
 
 ```text
-[x] 「にほんご」入力中に Ctrl+J → 「にほんご」がひらがなで確定
-[x] 「にほんご」入力中に Ctrl+K → 「ニホンゴ」がカタカナで確定
-[x] ライブ変換中（「日本語」表示）に Ctrl+J → 「にほんご」がひらがなに変換
-[x] ライブ変換中（「日本語」表示）に Ctrl+K → 「ニホンゴ」がカタカナに変換
-[x] 「にほんご」入力中に Ctrl+; → 「nihonngo」が半角英数で確定
-[x] ライブ変換中（「日本語」表示）に Ctrl+; → 「nihonngo」が半角英数に変換
+[x] 「にほんご」入力中に Ctrl+J → 「にほんご」がひらがなで確定（即コミット）
+[x] 「にほんご」入力中に Ctrl+K → 「ニホンゴ」がカタカナで確定（即コミット）
+[x] 「にほんご」入力中に Ctrl+; → 「nihonngo」が半角英数で確定（即コミット）
+[x] ライブ変換中（「日本語」表示）に Ctrl+J → preedit が「にほんご」に戻る（確定しない）
+[x] 続けて Ctrl+J → 「にほんご」がひらがなで確定
+[x] ライブ変換中に Ctrl+J → Ctrl+K → preedit が「ニホンゴ」に切替（確定しない）
+[x] 続けて Ctrl+K → 「ニホンゴ」がカタカナで確定
+[x] プレビュー中に文字入力 → プレビューが解除されて通常入力に戻る
 [x] 候補パネル表示中にも Ctrl+J/K/; が動作する
 [x] 空の状態（Empty）で Ctrl+J/K/; → 何も起きない（consumed=false）
 ```
@@ -509,6 +517,8 @@ T2: キーボードショートカット
   [x] Ctrl+J でひらがな確定
   [x] Ctrl+K でカタカナ確定
   [x] Ctrl+; で半角英数確定
+  [x] ライブ変換中は2段階動作（プレビュー→確定）
+  [x] プレビュー中のモード切替（Ctrl+J↔K↔;）
   [x] 候補パネル表示中でも動作する
   [x] JIS かな/英数キーが消費される（アプリに漏れない）
 
