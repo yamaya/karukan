@@ -21,6 +21,13 @@ cargo clippy --workspace    # Lint
 
 Model training is handled by the separate `karukan-jinen` Python project (not in this repo). Trains GPT-2 based models for kana-kanji conversion using jinen format; outputs GGUF files.
 
+## Reading Files
+
+- Use Grep to search for specific content instead of reading whole files
+- If you must read a file, start with `offset=0, limit=200` to gauge its size
+- For files over ~500 lines, use offset and limit to read only the relevant section
+- Never read large generated files (lock files, build artifacts) in full
+
 ## See Also
 
 @.claude/rules/architecture.md
