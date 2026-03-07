@@ -5,14 +5,16 @@
 //!
 //! ```text
 //! Empty ──push_char──→ Composing
-//! Composing ──Return──→ Empty         (commit hiragana)
-//! Composing ──Escape──→ Empty         (cancel)
+//! Composing ──Return──→ Empty              (commit hiragana)
+//! Composing ──Escape──→ Empty              (cancel)
 //! Composing ──Backspace──→ Composing | Empty
-//! Composing ──Space──→ Conversion     (kanji candidate selection)
-//! Conversion ──Return──→ Empty        (commit selected candidate)
-//! Conversion ──Escape──→ Composing    (back to hiragana editing)
-//! Conversion ──Space/Tab/Down──→ Conversion (next candidate)
-//! Conversion ──Up──→ Conversion       (previous candidate)
+//! Composing ──Space──→ BunsetsuConversion  (kanji/bunsetsu conversion)
+//! Composing(live) ──Left──→ BunsetsuConversion (enter at last segment)
+//! BunsetsuConversion ──Return──→ Empty     (commit all segments)
+//! BunsetsuConversion ──Escape──→ Composing (cancel)
+//! BunsetsuConversion ──Left──→ BunsetsuConversion (prev segment)
+//! BunsetsuConversion ──Right──→ BunsetsuConversion (next segment)
+//! BunsetsuConversion ──Space──→ BunsetsuConversion (show candidates)
 //! ```
 
 use std::ffi::CString;
@@ -178,14 +180,22 @@ pub(crate) struct CandidateCache {
 // SessionState
 // ---------------------------------------------------------------------------
 
-/// State held while the user is browsing conversion candidates.
-struct ConversionState {
-    /// The hiragana reading that was converted (used to restore on Escape).
+/// 一つの文節（変換単位）。
+struct BunsetsuSegment {
+    /// 文節の読み（ひらがな）。Escape 時の復元・学習記録に使う。
     hiragana: String,
-    /// Ranked candidate list (Learning → Model → Dict).
+    /// 現在の表示テキスト（候補リストの先頭、または選択済み候補）。
+    display: String,
+    /// 変換候補リスト（Learning → User Dict → Model → System Dict）。
     candidates: Vec<String>,
-    /// Currently highlighted candidate index.
-    cursor: usize,
+}
+
+/// 文節変換モードの状態。
+struct BunsetsuConversionState {
+    /// 文節リスト（1 つ以上）。
+    segments: Vec<BunsetsuSegment>,
+    /// 現在選択中の文節インデックス。
+    selected: usize,
 }
 
 enum SessionState {
@@ -193,8 +203,8 @@ enum SessionState {
     Empty,
     /// Accumulating romaji / hiragana input.
     Composing,
-    /// Browsing kanji conversion candidates.
-    Conversion(ConversionState),
+    /// 文節変換中（候補パネルの表示は candidate_cache で制御）。
+    BunsetsuConversion(BunsetsuConversionState),
 }
 
 /// Ctrl+J/K/; プレビューモード。
@@ -424,6 +434,41 @@ impl KarukanSession {
         !self.romaji.buffer().is_empty()
     }
 
+    /// pending romaji バッファのバイト長を返す。
+    /// pending がなければ 0。Swift が dotted underline の範囲計算に使う。
+    pub fn romaji_buf_len(&self) -> usize {
+        self.romaji.buffer().len()
+    }
+
+    /// BunsetsuConversion 状態の文節数を返す。それ以外の状態では 0。
+    pub fn segment_count(&self) -> usize {
+        match &self.state {
+            SessionState::BunsetsuConversion(conv) => conv.segments.len(),
+            _ => 0,
+        }
+    }
+
+    /// BunsetsuConversion 状態の選択文節インデックスを返す。それ以外では 0。
+    pub fn selected_segment(&self) -> usize {
+        match &self.state {
+            SessionState::BunsetsuConversion(conv) => conv.selected,
+            _ => 0,
+        }
+    }
+
+    /// BunsetsuConversion 状態の文節 `index` の現在表示テキストの文字数（NSString 長）を返す。
+    /// それ以外の状態またはインデックス範囲外では 0。
+    pub fn segment_char_count(&self, index: usize) -> usize {
+        match &self.state {
+            SessionState::BunsetsuConversion(conv) => conv
+                .segments
+                .get(index)
+                .map(|s| s.display.chars().count())
+                .unwrap_or(0),
+            _ => 0,
+        }
+    }
+
     /// Composing 状態のひらがなを返す。Composing でなければ `None`。
     ///
     /// バックグラウンドスレッドが推論を起動する前に、メインスレッドで取得するために使う。
@@ -526,10 +571,10 @@ impl KarukanSession {
         // take() にすると連続キー入力で None になりひらがなフォールバックが起きる。
         let prev_live = self.live_candidate.clone();
 
-        // In Conversion state, any printable char cancels conversion and
+        // In BunsetsuConversion state, any printable char cancels conversion and
         // re-enters Composing (commit the char as new input).
-        if matches!(self.state, SessionState::Conversion(_)) {
-            self.cancel_conversion();
+        if matches!(self.state, SessionState::BunsetsuConversion(_)) {
+            self.cancel_bunsetsu();
         }
 
         // Track the previous output length so we can compute the delta.
@@ -653,32 +698,57 @@ impl KarukanSession {
                 true
             }
             KarukanKey::Space if matches!(self.state, SessionState::Composing) => {
-                self.do_conversion();
+                self.do_conversion_impl(false);
+                true
+            }
+            // ライブ変換中に Left: 最後の文節を選択した状態で文節変換に入る
+            KarukanKey::Left
+                if matches!(self.state, SessionState::Composing)
+                    && self.live_candidate.is_some() =>
+            {
+                self.do_conversion_impl(true);
                 true
             }
 
-            // ── Conversion state ──────────────────────────────────────────
-            KarukanKey::Return if matches!(self.state, SessionState::Conversion(_)) => {
-                self.commit_current_candidate();
+            // ── BunsetsuConversion state ──────────────────────────────────
+            KarukanKey::Return if matches!(self.state, SessionState::BunsetsuConversion(_)) => {
+                self.commit_bunsetsu_all();
                 true
             }
-            KarukanKey::Escape if matches!(self.state, SessionState::Conversion(_)) => {
-                self.cancel_conversion();
+            KarukanKey::Escape if matches!(self.state, SessionState::BunsetsuConversion(_)) => {
+                if !self.candidate_cache.items.is_empty() {
+                    // 候補パネル表示中: パネルを隠すだけ（文節ナビを継続）
+                    self.candidate_cache.items.clear();
+                    self.candidate_cache.cursor = 0;
+                } else {
+                    // パネル非表示: 変換キャンセル → Composing
+                    self.cancel_bunsetsu();
+                }
                 true
             }
-            KarukanKey::Backspace if matches!(self.state, SessionState::Conversion(_)) => {
-                self.cancel_conversion(); // Conversion → Composing（ひらがな復元）
-                self.do_backspace(); // Composing の末尾1文字削除
+            KarukanKey::Backspace if matches!(self.state, SessionState::BunsetsuConversion(_)) => {
+                self.cancel_bunsetsu();
+                self.do_backspace();
+                true
+            }
+            KarukanKey::Left if matches!(self.state, SessionState::BunsetsuConversion(_)) => {
+                self.move_segment(-1);
+                true
+            }
+            KarukanKey::Right if matches!(self.state, SessionState::BunsetsuConversion(_)) => {
+                self.move_segment(1);
                 true
             }
             KarukanKey::Space | KarukanKey::Tab | KarukanKey::Down
-                if matches!(self.state, SessionState::Conversion(_)) =>
+                if matches!(self.state, SessionState::BunsetsuConversion(_)) =>
             {
-                self.move_candidate(1);
+                // Swift がパネル表示中に Space/Tab/Down を先に処理するため、
+                // ここに来るのはパネル非表示時のみ。
+                self.show_segment_candidates();
                 true
             }
-            KarukanKey::Up if matches!(self.state, SessionState::Conversion(_)) => {
-                self.move_candidate(-1);
+            KarukanKey::Up if matches!(self.state, SessionState::BunsetsuConversion(_)) => {
+                // パネル表示中は Swift/IMKCandidates が処理。消費だけする。
                 true
             }
 
@@ -686,32 +756,53 @@ impl KarukanSession {
         }
     }
 
-    /// Select a candidate by index and commit it immediately.
+    /// Select a candidate by index.
     ///
-    /// Used by `candidateSelected(_:)` in Swift (IMKCandidates click).
-    /// Returns `true` on success, `false` if not in Conversion state or out of range.
+    /// Used by `candidateSelected(_:)` in Swift (IMKCandidates click / Return).
+    ///
+    /// BunsetsuConversion 状態では選択文節の display を更新し、コミットはしない
+    /// (`commit.dirty` を立てない)。Swift 側が `karukan_has_commit() == 0` を
+    /// 確認して preedit を更新するだけにとどめる。
+    ///
+    /// Returns `true` on success, `false` if not in a conversion state or out of range.
     pub fn select_candidate(&mut self, index: usize) -> bool {
         self.clear_flags();
-        let SessionState::Conversion(ref conv) = self.state else {
+        let SessionState::BunsetsuConversion(ref conv) = self.state else {
             return false;
         };
-        if index >= conv.candidates.len() {
+        let sel = conv.selected;
+        if sel >= conv.segments.len() || index >= conv.segments[sel].candidates.len() {
             return false;
         }
-        let selected = conv.candidates[index].clone();
-        let hiragana = conv.hiragana.clone();
+        let chosen = conv.segments[sel].candidates[index].clone();
+        let hiragana = conv.segments[sel].hiragana.clone();
 
         if let Some(cache) = &mut self.learning {
-            cache.record(&hiragana, &selected);
+            cache.record(&hiragana, &chosen);
         }
-        self.commit.text = CString::new(selected).unwrap_or_default();
-        self.commit.dirty = true;
+
+        // display を更新（コミットはしない）
+        if let SessionState::BunsetsuConversion(ref mut conv) = self.state {
+            conv.segments[sel].display = chosen;
+        }
+
+        // 候補パネルを隠す
         self.candidate_cache.items.clear();
         self.candidate_cache.cursor = 0;
-        self.state = SessionState::Empty;
-        self.romaji.reset();
-        self.input_buf.clear();
-        self.update_preedit("");
+
+        // preedit を全文節で再構築（キャレット = 選択文節末尾）
+        let (preedit_text, caret_bytes) =
+            if let SessionState::BunsetsuConversion(ref conv) = self.state {
+                let text: String = conv.segments.iter().map(|s| s.display.as_str()).collect();
+                let caret: usize =
+                    conv.segments[..=sel].iter().map(|s| s.display.len()).sum();
+                (text, caret)
+            } else {
+                (String::new(), 0)
+            };
+        self.preedit.text = CString::new(preedit_text.as_str()).unwrap_or_default();
+        self.preedit.caret_bytes = caret_bytes as u32;
+        self.preedit.dirty = true;
         true
     }
 
@@ -830,13 +921,18 @@ impl KarukanSession {
         }
     }
 
-    /// Restore hiragana from Conversion state before converting.
+    /// Restore hiragana from BunsetsuConversion state before converting.
     ///
-    /// If in Conversion state, restores `input_buf` from the saved hiragana
-    /// and transitions to Composing so that `do_convert_*` can operate on it.
+    /// If in BunsetsuConversion state, restores `input_buf` from the saved
+    /// hiragana and transitions to Composing so that `do_convert_*` can operate.
     fn restore_hiragana_if_conversion(&mut self) {
-        if let SessionState::Conversion(ref conv) = self.state {
-            let hiragana = conv.hiragana.clone();
+        let hiragana: Option<String> = match &self.state {
+            SessionState::BunsetsuConversion(conv) => Some(
+                conv.segments.iter().map(|s| s.hiragana.as_str()).collect(),
+            ),
+            _ => None,
+        };
+        if let Some(hiragana) = hiragana {
             self.candidate_cache.items.clear();
             self.candidate_cache.cursor = 0;
             self.input_buf.clear();
@@ -920,11 +1016,11 @@ impl KarukanSession {
     // Private helpers — Conversion
     // -----------------------------------------------------------------------
 
-    /// Trigger kanji conversion from the current hiragana input.
+    /// 文節変換を開始する。
     ///
-    /// ライブ変換結果（live_candidate）があれば候補リストの先頭に保存する
-    /// （karukan-im の start_conversion における prev_suggest_text と同じ処理）。
-    fn do_conversion(&mut self) {
+    /// `start_at_last = true` のとき最後の文節を選択状態にする
+    /// （ライブ変換中の Left キー用）。`false` のとき最初の文節を選択。
+    fn do_conversion_impl(&mut self, start_at_last: bool) {
         self.convert_preview = None;
         // Flush pending romaji (e.g. lone "k" → "k" pass-through).
         let prev_len = self.romaji.output().chars().count();
@@ -947,74 +1043,173 @@ impl KarukanSession {
             return;
         }
 
-        // ライブ変換結果を取り出す（Space → Conversion 移行前にクリア）
+        // ライブ変換結果を取り出す（文節変換移行前にクリア）
         let prev_live = self.live_candidate.take();
 
-        let mut candidates = self.collect_candidates(&hiragana);
+        // ひらがなを文節に分割する。候補は lazy loading（show_segment_candidates で遅延ロード）。
+        let hiragana_segs = segment_hiragana(&hiragana);
+        let mut segments: Vec<BunsetsuSegment> = hiragana_segs
+            .iter()
+            .map(|h| BunsetsuSegment {
+                hiragana: h.clone(),
+                display: h.clone(), // 初期表示 = ひらがな（候補ロード前）
+                candidates: vec![], // 空: show_segment_candidates で遅延ロード
+            })
+            .collect();
 
-        // ライブ変換結果が候補リストにない場合のみ先頭に挿入する。
-        // 推論戦略が変わっても表示していた候補が消えないようにする
-        // （karukan-im: start_conversion の prev_suggest_text 処理）。
-        if let Some(live) = prev_live {
-            if live != hiragana && !candidates.contains(&live) {
-                candidates.insert(0, live);
+        // 単一文節かつ prev_live がある場合: display にライブ変換結果を使う
+        // （candidates は空のまま; ロード時に学習キャッシュから先頭に追加される）
+        if segments.len() == 1 {
+            if let Some(live) = prev_live {
+                if live != hiragana {
+                    segments[0].display = live;
+                }
             }
         }
 
-        // Populate candidate cache for FFI.
-        self.candidate_cache.items = candidates
-            .iter()
-            .map(|s| CString::new(s.as_str()).unwrap_or_default())
-            .collect();
+        let n = segments.len();
+        let initial_selected = if start_at_last { n.saturating_sub(1) } else { 0 };
+
+        // candidate_cache は空（1 回目の Space では候補パネルを表示しない）。
+        // 2 回目の Space / Down で show_segment_candidates が lazy ロードして表示する。
+        self.candidate_cache.items.clear();
         self.candidate_cache.cursor = 0;
 
-        // Show first candidate in preedit.
-        let first = candidates
-            .first()
-            .cloned()
-            .unwrap_or_else(|| hiragana.clone());
-        self.update_preedit(&first);
-        self.preedit.caret_bytes = first.len() as u32;
+        // preedit = 全文節の display を連結（キャレット = 選択文節末尾）
+        let preedit_text: String = segments.iter().map(|s| s.display.as_str()).collect();
+        let caret_bytes: usize = segments[..=initial_selected]
+            .iter()
+            .map(|s| s.display.len())
+            .sum();
+        self.preedit.text = CString::new(preedit_text.as_str()).unwrap_or_default();
+        self.preedit.caret_bytes = caret_bytes as u32;
+        self.preedit.dirty = true;
 
-        self.state = SessionState::Conversion(ConversionState {
-            hiragana,
-            candidates,
-            cursor: 0,
+        self.state = SessionState::BunsetsuConversion(BunsetsuConversionState {
+            segments,
+            selected: initial_selected,
         });
     }
 
-    /// Advance or retreat the selected candidate by `delta` (+1 or -1).
-    fn move_candidate(&mut self, delta: i32) {
-        let SessionState::Conversion(ref mut conv) = self.state else {
-            return;
+    /// 選択文節を delta だけ移動する（-1 = 前、+1 = 次）。端でクランプ。
+    fn move_segment(&mut self, delta: i32) {
+        let (new_selected, preedit_text, caret_bytes) = match &mut self.state {
+            SessionState::BunsetsuConversion(conv) => {
+                let n = conv.segments.len();
+                if n == 0 {
+                    return;
+                }
+                let new_sel =
+                    (conv.selected as i32 + delta).clamp(0, n as i32 - 1) as usize;
+                conv.selected = new_sel;
+                let text: String =
+                    conv.segments.iter().map(|s| s.display.as_str()).collect();
+                let caret: usize =
+                    conv.segments[..=new_sel].iter().map(|s| s.display.len()).sum();
+                (new_sel, text, caret)
+            }
+            _ => return,
         };
-        let len = conv.candidates.len();
-        if len == 0 {
-            return;
-        }
-        conv.cursor = ((conv.cursor as i32 + delta).rem_euclid(len as i32)) as usize;
-        self.candidate_cache.cursor = conv.cursor as u32;
-
-        let text = conv.candidates[conv.cursor].clone();
-        self.update_preedit(&text);
-        self.preedit.caret_bytes = text.len() as u32;
+        let _ = new_selected; // used above via conv.selected
+        // 候補パネルを隠す
+        self.candidate_cache.items.clear();
+        self.candidate_cache.cursor = 0;
+        self.preedit.text = CString::new(preedit_text.as_str()).unwrap_or_default();
+        self.preedit.caret_bytes = caret_bytes as u32;
+        self.preedit.dirty = true;
     }
 
-    /// Commit the currently selected candidate.
-    fn commit_current_candidate(&mut self) {
-        let SessionState::Conversion(ref conv) = self.state else {
-            return;
+    /// 選択文節の候補を candidate_cache に設定する（候補パネルを表示）。
+    ///
+    /// 候補が未ロードの場合（candidates が空）は `collect_candidates` を呼んで
+    /// lazy ロードする。display もひらがなのままなら最良候補に更新し preedit を刷新する。
+    fn show_segment_candidates(&mut self) {
+        // lazy loading: 選択文節の候補が未ロードなら今ロードする
+        let needs_load = match &self.state {
+            SessionState::BunsetsuConversion(conv) => conv
+                .segments
+                .get(conv.selected)
+                .map_or(false, |s| s.candidates.is_empty()),
+            _ => return,
         };
-        if conv.candidates.is_empty() {
-            return;
-        }
-        let selected = conv.candidates[conv.cursor].clone();
-        let hiragana = conv.hiragana.clone();
 
-        if let Some(cache) = &mut self.learning {
-            cache.record(&hiragana, &selected);
+        if needs_load {
+            let (selected, hiragana) = match &self.state {
+                SessionState::BunsetsuConversion(conv) => (
+                    conv.selected,
+                    conv.segments
+                        .get(conv.selected)
+                        .map(|s| s.hiragana.clone())
+                        .unwrap_or_default(),
+                ),
+                _ => return,
+            };
+            // collect_candidates は &self を借用するため、state の可変借用の前に完了させる
+            let candidates = self.collect_candidates(&hiragana);
+
+            if let SessionState::BunsetsuConversion(ref mut conv) = self.state {
+                if let Some(seg) = conv.segments.get_mut(selected) {
+                    seg.candidates = candidates;
+                    // display がまだひらがなの場合: 最良候補に更新
+                    if seg.display == seg.hiragana {
+                        if let Some(first) = seg.candidates.first() {
+                            seg.display = first.clone();
+                        }
+                    }
+                }
+                // preedit を更新（display が変わった可能性があるため）
+                let preedit_text: String =
+                    conv.segments.iter().map(|s| s.display.as_str()).collect();
+                let caret_bytes: usize = conv.segments[..=conv.selected]
+                    .iter()
+                    .map(|s| s.display.len())
+                    .sum();
+                self.preedit.text = CString::new(preedit_text.as_str()).unwrap_or_default();
+                self.preedit.caret_bytes = caret_bytes as u32;
+                self.preedit.dirty = true;
+            }
         }
-        self.commit.text = CString::new(selected).unwrap_or_default();
+
+        // candidate_cache を選択文節の候補で埋める（パネル表示トリガー）
+        let candidates: Vec<CString> = match &self.state {
+            SessionState::BunsetsuConversion(conv) => conv
+                .segments
+                .get(conv.selected)
+                .map(|s| {
+                    s.candidates
+                        .iter()
+                        .map(|c| CString::new(c.as_str()).unwrap_or_default())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            _ => return,
+        };
+        self.candidate_cache.items = candidates;
+        self.candidate_cache.cursor = 0;
+    }
+
+    /// 全文節を結合してコミットし、Empty 状態に戻る。
+    fn commit_bunsetsu_all(&mut self) {
+        let (committed, learning_entries) = match &self.state {
+            SessionState::BunsetsuConversion(conv) => {
+                let text: String =
+                    conv.segments.iter().map(|s| s.display.as_str()).collect();
+                let entries: Vec<(String, String)> = conv
+                    .segments
+                    .iter()
+                    .filter(|s| s.display != s.hiragana)
+                    .map(|s| (s.hiragana.clone(), s.display.clone()))
+                    .collect();
+                (text, entries)
+            }
+            _ => return,
+        };
+        for (hiragana, display) in &learning_entries {
+            if let Some(cache) = &mut self.learning {
+                cache.record(hiragana, display);
+            }
+        }
+        self.commit.text = CString::new(committed).unwrap_or_default();
         self.commit.dirty = true;
         self.candidate_cache.items.clear();
         self.candidate_cache.cursor = 0;
@@ -1024,17 +1219,18 @@ impl KarukanSession {
         self.update_preedit("");
     }
 
-    /// Cancel conversion and restore the hiragana preedit.
-    fn cancel_conversion(&mut self) {
-        let hiragana = match &self.state {
-            SessionState::Conversion(conv) => conv.hiragana.clone(),
+    /// 文節変換をキャンセルし、ひらがな preedit を復元して Composing に戻る。
+    fn cancel_bunsetsu(&mut self) {
+        let hiragana: String = match &self.state {
+            SessionState::BunsetsuConversion(conv) => {
+                conv.segments.iter().map(|s| s.hiragana.as_str()).collect()
+            }
             _ => return,
         };
         self.candidate_cache.items.clear();
         self.candidate_cache.cursor = 0;
         self.live_candidate = None;
         self.state = SessionState::Composing;
-        // Restore input_buf to the hiragana we were converting from.
         self.input_buf.clear();
         self.input_buf.insert(&hiragana);
         self.romaji.reset();
@@ -1155,6 +1351,72 @@ impl Default for KarukanSession {
 /// ひらがなとみなす。句読点・記号・カタカナ等はひらがなではないため false を返す。
 fn is_hiragana_char(c: char) -> bool {
     matches!(c, '\u{3041}'..='\u{3096}' | '\u{309D}'..='\u{309F}' | '\u{30FC}')
+}
+
+// ---------------------------------------------------------------------------
+// 文節分割
+// ---------------------------------------------------------------------------
+
+/// ひらがな文字列を助詞境界で文節に分割する。
+///
+/// 2文字助詞を 1文字助詞より優先してチェックし、助詞をその文節の末尾に含める。
+/// 助詞の直後に文字がない場合（末尾助詞）は分割しない。
+/// 分割結果がなければ全体を 1 要素で返す。
+///
+/// # Examples
+/// ```
+/// // "わたしはがっこうへいきます" → ["わたしは", "がっこうへ", "いきます"]
+/// // "せんたく"                   → ["せんたく"]
+/// ```
+fn segment_hiragana(hiragana: &str) -> Vec<String> {
+    const P2: &[&str] = &[
+        "から", "まで", "より", "って", "けど", "ので", "のに", "には", "では",
+        "とは", "でも", "とも", "しか", "ながら",
+    ];
+    const P1: &[char] = &[
+        'は', 'が', 'を', 'に', 'で', 'へ', 'と', 'も', 'の', 'や', 'か',
+    ];
+
+    let chars: Vec<char> = hiragana.chars().collect();
+    let n = chars.len();
+    if n <= 1 {
+        return vec![hiragana.to_string()];
+    }
+
+    let mut segments: Vec<String> = Vec::new();
+    let mut start: usize = 0;
+    let mut i: usize = 1; // 先頭文字は常にセグメントに含める
+
+    while i < n {
+        // 2文字助詞チェック（助詞の直後にさらに文字が必要）
+        if i + 1 < n && i + 2 < n {
+            let two: String = chars[i..=i + 1].iter().collect();
+            if P2.contains(&two.as_str()) {
+                segments.push(chars[start..=i + 1].iter().collect());
+                start = i + 2;
+                i = start + 1;
+                continue;
+            }
+        }
+        // 1文字助詞チェック（助詞の直後にさらに文字が必要）
+        if i + 1 < n && P1.contains(&chars[i]) {
+            segments.push(chars[start..=i].iter().collect());
+            start = i + 1;
+            i = start + 1;
+            continue;
+        }
+        i += 1;
+    }
+
+    // 残り
+    if start < n {
+        segments.push(chars[start..].iter().collect());
+    }
+
+    if segments.is_empty() {
+        segments.push(hiragana.to_string());
+    }
+    segments
 }
 
 // ---------------------------------------------------------------------------
@@ -1611,9 +1873,18 @@ mod tests {
         let mut s = KarukanSession::new();
         s.push_char('a'); // "あ"
         s.push_key(KarukanKey::Space);
-        // Should be in Conversion state; candidate_cache has at least 1 item.
+        // 1 回目の Space: BunsetsuConversion に入るが候補は lazy（まだ空）
         assert!(!s.is_empty());
-        assert!(!s.candidate_cache.items.is_empty());
+        assert!(
+            s.candidate_cache.items.is_empty(),
+            "lazy: candidates not loaded until second Space"
+        );
+        // 2 回目の Space: 選択文節の候補を lazy ロード
+        s.push_key(KarukanKey::Space);
+        assert!(
+            !s.candidate_cache.items.is_empty(),
+            "after second Space, candidates are loaded"
+        );
         assert_eq!(s.candidate_cache.cursor, 0);
     }
 
@@ -1647,10 +1918,15 @@ mod tests {
         "nihongo".chars().for_each(|c| {
             s.push_char(c);
         });
+        // 1 回目の Space: BunsetsuConversion へ（候補 lazy）
+        s.push_key(KarukanKey::Space);
+        assert!(s.candidate_cache.items.is_empty(), "lazy after first Space");
+        // 2 回目の Space: 候補 lazy ロード
         s.push_key(KarukanKey::Space);
         let count = s.candidate_cache.items.len();
         if count > 1 {
-            s.push_key(KarukanKey::Space); // next
+            // 3 回目の Space: 次候補へ（cursor が進む）
+            s.push_key(KarukanKey::Space);
             assert_eq!(s.candidate_cache.cursor, 1);
         }
     }
@@ -1659,11 +1935,16 @@ mod tests {
     fn test_select_candidate() {
         let mut s = KarukanSession::new();
         s.push_char('a');
+        // 1 回目の Space: BunsetsuConversion（候補 lazy）
+        s.push_key(KarukanKey::Space);
+        // 2 回目の Space: 候補 lazy ロード
         s.push_key(KarukanKey::Space);
         let ok = s.select_candidate(0);
         assert!(ok);
-        assert!(s.commit.dirty);
-        assert!(s.is_empty());
+        // BunsetsuConversion では select_candidate は display 更新のみ（コミットしない）。
+        // Return で全文節をコミットするのが正しいフロー。
+        assert!(!s.commit.dirty, "bunsetsu mode: select_candidate should NOT commit");
+        assert!(!s.is_empty(), "should remain in BunsetsuConversion after selecting");
     }
 
     #[test]
@@ -1732,8 +2013,8 @@ mod tests {
     fn test_convert_hiragana_from_conversion() {
         let mut s = KarukanSession::new();
         s.push_char('a');
-        s.push_key(KarukanKey::Space); // enter Conversion
-        assert!(!s.candidate_cache.items.is_empty());
+        s.push_key(KarukanKey::Space); // enter BunsetsuConversion（候補 lazy）
+        // lazy loading: ConvertHiragana は候補ロード不要で即動作
         s.push_key(KarukanKey::ConvertHiragana);
         assert!(s.commit.dirty);
         assert_eq!(s.commit.text.to_str().unwrap(), "あ");

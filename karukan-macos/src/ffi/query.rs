@@ -119,6 +119,16 @@ pub extern "C" fn karukan_is_consonant_pending(session: *const KarukanSession) -
     .unwrap_or(0)
 }
 
+/// Returns the byte length of the pending romaji buffer.
+///
+/// Swift uses this to split preedit into confirmed hiragana (single underline)
+/// and pending romaji (dotted underline) portions.
+/// Returns `0` if no romaji is pending or `session` is `NULL`.
+#[unsafe(no_mangle)]
+pub extern "C" fn karukan_get_romaji_buf_len(session: *const KarukanSession) -> u32 {
+    std::panic::catch_unwind(|| ffi_ref!(session, 0).romaji_buf_len() as u32).unwrap_or(0)
+}
+
 // ---------------------------------------------------------------------------
 // Candidates
 // ---------------------------------------------------------------------------
@@ -253,6 +263,41 @@ pub extern "C" fn karukan_free_string(ptr: *mut c_char) {
         // SAFETY: ptr は karukan_convert_top1 が CString::into_raw() で生成したもの。
         unsafe { drop(std::ffi::CString::from_raw(ptr)) };
     }
+}
+
+// ---------------------------------------------------------------------------
+// BunsetsuConversion — segment info
+// ---------------------------------------------------------------------------
+
+/// BunsetsuConversion 状態の文節数を返す。
+///
+/// 0 の場合は文節変換状態ではない（Composing / Empty など）。
+/// Returns `0` if `session` is `NULL`.
+#[unsafe(no_mangle)]
+pub extern "C" fn karukan_get_segment_count(session: *const KarukanSession) -> u32 {
+    std::panic::catch_unwind(|| ffi_ref!(session, 0).segment_count() as u32).unwrap_or(0)
+}
+
+/// BunsetsuConversion 状態の文節 `index` の現在表示テキストの文字数（NSString 長）を返す。
+///
+/// Returns `0` if `session` is `NULL`, not in BunsetsuConversion, or index is out of range.
+#[unsafe(no_mangle)]
+pub extern "C" fn karukan_get_segment_char_count(
+    session: *const KarukanSession,
+    index: u32,
+) -> u32 {
+    std::panic::catch_unwind(|| {
+        ffi_ref!(session, 0).segment_char_count(index as usize) as u32
+    })
+    .unwrap_or(0)
+}
+
+/// BunsetsuConversion 状態の現在選択中の文節インデックスを返す。
+///
+/// Returns `0` if `session` is `NULL` or not in BunsetsuConversion.
+#[unsafe(no_mangle)]
+pub extern "C" fn karukan_get_selected_segment(session: *const KarukanSession) -> u32 {
+    std::panic::catch_unwind(|| ffi_ref!(session, 0).selected_segment() as u32).unwrap_or(0)
 }
 
 // ---------------------------------------------------------------------------

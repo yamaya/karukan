@@ -177,6 +177,16 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
                 _ = karukan_push_key(session, KarukanMacOSKey.escape.rawValue)
                 updateClientState(client: sender)
                 panel.hide()
+            case 123: // Left → 候補パネルを閉じて前の文節へ
+                guard let session else { return true }
+                _ = karukan_push_key(session, KarukanMacOSKey.leftArrow.rawValue)
+                updateClientState(client: sender)
+                panel.hide()
+            case 124: // Right → 候補パネルを閉じて次の文節へ
+                guard let session else { return true }
+                _ = karukan_push_key(session, KarukanMacOSKey.rightArrow.rawValue)
+                updateClientState(client: sender)
+                panel.hide()
             case 49: // Space / Shift-Space
                 if event.modifierFlags.contains(.shift) {
                     panel.moveUp(nil)
@@ -295,6 +305,10 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
             return consumed
         }
 
+        // preedit と候補パネルを即時更新（push_key パスと同じ）
+        updateClientState(client: sender)
+        updateCandidatesPanel(sender: sender)
+
         // Rust が消費しなかった記号を全角に変換して挿入
         if !consumed, let fullWidth = Self.fullWidthMap[chars] {
             if karukan_is_empty(session) == 0 {
@@ -345,12 +359,12 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
         }
         _ = karukan_select_candidate(session, idx)
 
-        // コミットテキストをクライアントに送る。
         // パネルクリック後は client() が無効になるため currentSender を優先する。
         let c = (currentSender ?? client()) as AnyObject
-        if karukan_has_commit(session) != 0,
-           let ptr = karukan_get_commit(session) {
-            let committed = String(cString: ptr)
+
+        if karukan_has_commit(session) != 0 {
+            // 通常コミット（全文節一括確定など）
+            let committed = karukan_get_commit(session).map { String(cString: $0) } ?? ""
             if !committed.isEmpty {
                 logger.debug("candidateSelected commit: '\(committed)'")
                 c.insertText?(
@@ -358,36 +372,60 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
                     replacementRange: NSRange(location: NSNotFound, length: 0)
                 )
             }
+            candidatesPanel?.hide()
+            c.setMarkedText?(
+                "",
+                selectionRange: NSRange(location: 0, length: 0),
+                replacementRange: NSRange(location: NSNotFound, length: 0)
+            )
+        } else {
+            // 文節候補の確定: コミットなし、preedit を更新して文節ナビへ戻る
+            candidatesPanel?.hide()
+            updateClientState(client: c)
         }
-
-        candidatesPanel?.hide()
-        c.setMarkedText?(
-            "",
-            selectionRange: NSRange(location: 0, length: 0),
-            replacementRange: NSRange(location: NSNotFound, length: 0)
-        )
     }
 
     /// パネル上の選択候補が変わったとき（矢印キー・クリックによるフォーカス移動）に呼ばれる。
     /// preedit を選択中の候補文字列で更新する。
     /// commit はここでは行わない（確定時は candidateSelected が呼ばれる）。
     override func candidateSelectionChanged(_ candidateString: NSAttributedString!) {
-        guard let c = (currentSender as AnyObject?) ?? (self.client() as AnyObject?) else { return }
+        guard let c = (currentSender as AnyObject?) ?? (self.client() as AnyObject?),
+              let session else { return }
 
-        let text = candidateString.string
-        logger.debug("candidateSelectionChanged: '\(text)'")
+        let candidateText = candidateString.string
+        logger.debug("candidateSelectionChanged: '\(candidateText)'")
 
-        let attrStr = NSMutableAttributedString(string: text)
-        attrStr.addAttribute(
-            .underlineStyle,
-            value: NSUnderlineStyle.single.rawValue,
-            range: NSRange(text.startIndex..., in: text)
-        )
-        c.setMarkedText?(
-            attrStr,
-            selectionRange: NSRange(location: text.count, length: 0),
-            replacementRange: NSRange(location: NSNotFound, length: 0)
-        )
+        let segmentCount = Int(karukan_get_segment_count(session))
+        if segmentCount > 0 {
+            // 文節変換モード: 全文節を表示し、選択文節だけ候補テキストに置き換える
+            let selectedSeg = Int(karukan_get_selected_segment(session))
+            let segTexts = getSegmentTexts(
+                session: session,
+                segmentCount: segmentCount,
+                overrideIndex: selectedSeg,
+                overrideText: candidateText
+            )
+            let attrStr = buildSegmentAttrStr(segTexts: segTexts, selectedSeg: selectedSeg)
+            let caretPos = segTexts.prefix(selectedSeg + 1).reduce(0) { $0 + $1.count }
+            c.setMarkedText?(
+                attrStr,
+                selectionRange: NSRange(location: caretPos, length: 0),
+                replacementRange: NSRange(location: NSNotFound, length: 0)
+            )
+        } else {
+            // 通常モード: 候補テキストをそのまま表示
+            let attrStr = NSMutableAttributedString(string: candidateText)
+            attrStr.addAttribute(
+                .underlineStyle,
+                value: NSUnderlineStyle.single.rawValue,
+                range: NSRange(candidateText.startIndex..., in: candidateText)
+            )
+            c.setMarkedText?(
+                attrStr,
+                selectionRange: NSRange(location: candidateText.count, length: 0),
+                replacementRange: NSRange(location: NSNotFound, length: 0)
+            )
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -463,7 +501,6 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
         }
 
         let preeditText = karukan_get_preedit(session).map { String(cString: $0) } ?? ""
-        let caretBytes  = Int(karukan_get_preedit_caret(session))
         isComposing = !preeditText.isEmpty
 
         if preeditText.isEmpty {
@@ -473,32 +510,117 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
                 replacementRange: NSRange(location: NSNotFound, length: 0)
             )
         } else {
-            let cursorCharIndex = preeditText.utf8
-                .prefix(caretBytes)
-                .reduce(0) { acc, byte in
-                    (byte & 0xC0) != 0x80 ? acc + 1 : acc
+            let segmentCount = Int(karukan_get_segment_count(session))
+            if segmentCount > 0 {
+                // 文節変換モード: 文節ごとに thick / single アンダーラインを設定
+                let selectedSeg = Int(karukan_get_selected_segment(session))
+                let segTexts = getSegmentTexts(session: session, segmentCount: segmentCount)
+                let attrStr = buildSegmentAttrStr(segTexts: segTexts, selectedSeg: selectedSeg)
+                let caretPos = segTexts.prefix(selectedSeg + 1).reduce(0) { $0 + $1.count }
+                logger.debug("setMarkedText(bunsetsu): '\(preeditText, privacy: .public)' sel=\(selectedSeg)")
+                c.setMarkedText?(
+                    attrStr,
+                    selectionRange: NSRange(location: caretPos, length: 0),
+                    replacementRange: NSRange(location: NSNotFound, length: 0)
+                )
+            } else {
+                // 通常モード: ひらがな部分 = single、pending romaji = dotted underline
+                let caretBytes = Int(karukan_get_preedit_caret(session))
+                let cursorCharIndex = preeditText.utf8
+                    .prefix(caretBytes)
+                    .reduce(0) { acc, byte in
+                        (byte & 0xC0) != 0x80 ? acc + 1 : acc
+                    }
+                let attrStr = NSMutableAttributedString(string: preeditText)
+                let fullRange = NSRange(preeditText.startIndex..., in: preeditText)
+                let romajiLen = Int(karukan_get_romaji_buf_len(session))
+                if romajiLen > 0 {
+                    // pending romaji は ASCII (1 byte = 1 UTF-16 code unit)
+                    let totalChars = preeditText.utf16.count
+                    let hiraganaChars = totalChars - romajiLen
+                    if hiraganaChars > 0 {
+                        attrStr.addAttribute(
+                            .underlineStyle,
+                            value: NSUnderlineStyle.single.rawValue,
+                            range: NSRange(location: 0, length: hiraganaChars)
+                        )
+                    }
+                    let dottedStyle = NSUnderlineStyle.single.rawValue | NSUnderlineStyle.patternDot.rawValue
+                    attrStr.addAttribute(
+                        .underlineStyle,
+                        value: dottedStyle,
+                        range: NSRange(location: hiraganaChars, length: romajiLen)
+                    )
+                } else {
+                    attrStr.addAttribute(
+                        .underlineStyle,
+                        value: NSUnderlineStyle.single.rawValue,
+                        range: fullRange
+                    )
                 }
-
-            let attrStr = NSMutableAttributedString(string: preeditText)
-            let fullRange = NSRange(preeditText.startIndex..., in: preeditText)
-            attrStr.addAttribute(
-                .underlineStyle,
-                value: NSUnderlineStyle.single.rawValue,
-                range: fullRange
-            )
-
-            logger.debug("setMarkedText: '\(preeditText, privacy: .public)' caret=\(cursorCharIndex)")
-            c.setMarkedText?(
-                attrStr,
-                selectionRange: NSRange(location: cursorCharIndex, length: 0),
-                replacementRange: NSRange(location: NSNotFound, length: 0)
-            )
+                logger.debug("setMarkedText: '\(preeditText, privacy: .public)' caret=\(cursorCharIndex) romajiLen=\(romajiLen)")
+                c.setMarkedText?(
+                    attrStr,
+                    selectionRange: NSRange(location: cursorCharIndex, length: 0),
+                    replacementRange: NSRange(location: NSNotFound, length: 0)
+                )
+            }
         }
 
         // Empty 状態に戻ったら generation をインクリメントして残存タスクを無効化する
         if karukan_is_empty(session) != 0 {
             liveConversionGeneration &+= 1
         }
+    }
+
+    /// 全文節のテキストを `[String]` で返す。
+    /// `overrideIndex` 番の文節を `overrideText` で上書きする（候補プレビュー用）。
+    private func getSegmentTexts(
+        session: OpaquePointer,
+        segmentCount: Int,
+        overrideIndex: Int = -1,
+        overrideText: String = ""
+    ) -> [String] {
+        let fullPreedit = karukan_get_preedit(session).map { String(cString: $0) } ?? ""
+        var texts: [String] = []
+        var idx = fullPreedit.startIndex
+        for i in 0..<segmentCount {
+            let charCount = Int(karukan_get_segment_char_count(session, UInt32(i)))
+            if i == overrideIndex {
+                texts.append(overrideText)
+                // preedit 上の文字数だけ進める（display が変わっていても）
+                let end = fullPreedit.index(idx, offsetBy: charCount, limitedBy: fullPreedit.endIndex) ?? fullPreedit.endIndex
+                idx = end
+            } else {
+                let end = fullPreedit.index(idx, offsetBy: charCount, limitedBy: fullPreedit.endIndex) ?? fullPreedit.endIndex
+                texts.append(String(fullPreedit[idx..<end]))
+                idx = end
+            }
+        }
+        return texts
+    }
+
+    /// 文節テキスト配列から属性付き文字列を作成する。
+    /// 選択文節は thick、それ以外は single アンダーライン。
+    private func buildSegmentAttrStr(segTexts: [String], selectedSeg: Int) -> NSMutableAttributedString {
+        let fullText = segTexts.joined()
+        let attrStr = NSMutableAttributedString(string: fullText)
+        var charOffset = 0
+        for (i, seg) in segTexts.enumerated() {
+            let len = seg.count
+            if len > 0 {
+                let style: Int = (i == selectedSeg)
+                    ? NSUnderlineStyle.thick.rawValue
+                    : NSUnderlineStyle.single.rawValue
+                attrStr.addAttribute(
+                    .underlineStyle,
+                    value: style,
+                    range: NSRange(location: charOffset, length: len)
+                )
+            }
+            charOffset += len
+        }
+        return attrStr
     }
 
     /// バックグラウンドで推論を起動し、完了後にメインスレッドでライブ変換結果を適用する。

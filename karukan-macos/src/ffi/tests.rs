@@ -476,13 +476,20 @@ fn test_unknown_key_does_not_consume() {
 fn test_space_key_triggers_conversion() {
     let s = TestSession::new();
     s.push_char("a"); // composing "あ"
-    // Space should be consumed (triggers conversion attempt).
+    // 1 回目の Space: BunsetsuConversion へ（候補 lazy のため空）
     assert!(s.push_key(KEY_SPACE));
-    // In Conversion state: preedit shows the first candidate (at minimum the hiragana itself).
-    // The session must not be empty (candidate or preedit is set).
     assert!(!s.is_empty());
-    // Candidate cache should have at least 1 entry (fallback = the hiragana reading).
-    assert!(s.candidate_count() > 0);
+    assert_eq!(
+        s.candidate_count(),
+        0,
+        "lazy: candidates not loaded until second Space"
+    );
+    // 2 回目の Space: 選択文節の候補を lazy ロード
+    assert!(s.push_key(KEY_SPACE));
+    assert!(
+        s.candidate_count() > 0,
+        "after second Space, candidates are loaded"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -719,10 +726,10 @@ fn test_is_consonant_pending_false_when_empty() {
 fn test_conversion_return_commits_ffi() {
     let s = TestSession::new();
     s.push_char("a");
-    s.push_key(KEY_SPACE); // → Conversion
+    s.push_key(KEY_SPACE); // → BunsetsuConversion（候補 lazy）
 
     assert!(!s.is_empty());
-    assert!(s.candidate_count() > 0);
+    // lazy loading: 候補は 2 回目の Space で初めてロードされる（Return は候補なしでも動作）
 
     assert!(s.push_key(KEY_RETURN));
     assert!(s.has_commit());
@@ -750,26 +757,33 @@ fn test_conversion_cursor_down_ffi() {
     for ch in "aiu".chars() {
         s.push_char(&ch.to_string());
     }
+    // 1 回目の Space: BunsetsuConversion（候補 lazy）
     s.push_key(KEY_SPACE);
+    assert_eq!(s.candidate_count(), 0, "lazy after first Space");
 
+    // 2 回目の Space: 候補 lazy ロード
+    s.push_key(KEY_SPACE);
     let count = s.candidate_count();
-    assert!(count >= 1);
+    assert!(count >= 1, "candidates loaded after second Space");
     assert_eq!(s.candidate_cursor(), 0);
 
+    // BunsetsuConversion では Down は show_segment_candidates() を呼ぶのみ。
+    // カーソル移動は Swift/IMKCandidates が担当するため Rust 側では cursor は変わらない。
     s.push_key(KEY_DOWN);
-    // count == 1 なら wrap して 0 のまま; count > 1 なら 1 へ
-    let expected = if count == 1 { 0 } else { 1 };
-    assert_eq!(s.candidate_cursor(), expected);
+    assert_eq!(s.candidate_cursor(), 0, "cursor movement is handled by Swift/IMKCandidates");
 }
 
 #[test]
 fn test_conversion_cursor_full_wrap_ffi() {
     let s = TestSession::new();
     s.push_char("a");
+    // 1 回目の Space: BunsetsuConversion（候補 lazy）
+    s.push_key(KEY_SPACE);
+    // 2 回目の Space: 候補 lazy ロード
     s.push_key(KEY_SPACE);
 
     let count = s.candidate_count();
-    assert!(count >= 1);
+    assert!(count >= 1, "candidates loaded after second Space");
 
     // count 回 Down を押すと先頭 (0) に戻る
     for _ in 0..count {
@@ -813,12 +827,16 @@ fn test_conversion_backspace_cancels_and_deletes_ffi() {
 fn test_select_candidate_in_range_commits_ffi() {
     let s = TestSession::new();
     s.push_char("a");
+    // 1 回目の Space: BunsetsuConversion（候補 lazy）
+    s.push_key(KEY_SPACE);
+    // 2 回目の Space: 候補 lazy ロード
     s.push_key(KEY_SPACE);
 
+    // BunsetsuConversion では select_candidate は選択文節の display を更新するだけ。
+    // コミットは Return (commit_bunsetsu_all) で行う。
     assert!(s.select_candidate(0));
-    assert!(s.has_commit());
-    assert!(!s.commit_text().is_empty());
-    assert!(s.is_empty());
+    assert!(!s.has_commit(), "bunsetsu mode: select_candidate should NOT commit");
+    assert!(!s.is_empty(), "should remain in BunsetsuConversion after selecting");
 }
 
 #[test]

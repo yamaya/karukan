@@ -174,6 +174,13 @@ int karukan_is_empty(const KarukanSession* session);
  */
 int karukan_is_consonant_pending(const KarukanSession* session);
 
+/**
+ * Returns the byte length of the pending romaji buffer (0 = none pending).
+ * Swift uses this to apply dotted underline to the unconverted romaji portion
+ * of the preedit, distinguishing it from confirmed hiragana (single underline).
+ */
+uint32_t karukan_get_romaji_buf_len(const KarukanSession* session);
+
 /* -------------------------------------------------------------------------
  * Persistence
  * ---------------------------------------------------------------------- */
@@ -218,14 +225,50 @@ const char* karukan_get_candidate(const KarukanSession* session, uint32_t index)
 uint32_t karukan_get_candidate_cursor(const KarukanSession* session);
 
 /**
- * Select the candidate at index and commit it immediately.
+ * Select the candidate at index.
  *
- * Used by candidateSelected(_:) in Swift when the user clicks a candidate
- * in the IMKCandidates panel.
- * Returns 1 on success, 0 if not in Conversion state or index is out of range.
+ * Used by candidateSelected(_:) in Swift when the user clicks or presses
+ * Return in the IMKCandidates panel.
+ *
+ * BunsetsuConversion 状態では選択文節の display を更新するのみでコミットしない
+ * (karukan_has_commit() == 0 のまま)。Swift 側は has_commit を確認してから
+ * insertText するかどうかを判断すること。
+ *
+ * Returns 1 on success, 0 if not in a conversion state or index is out of range.
  * Returns 0 if session is NULL.
  */
 int karukan_select_candidate(KarukanSession* session, uint32_t index);
+
+/* -------------------------------------------------------------------------
+ * BunsetsuConversion — segment info
+ *
+ * 文節変換モード中にセグメント情報を取得する。
+ * 文節変換モード (BunsetsuConversion) でなければ 0 を返す。
+ * ---------------------------------------------------------------------- */
+
+/**
+ * BunsetsuConversion 状態の文節数を返す。
+ *
+ * 0 の場合は文節変換状態ではない (Composing / Empty など)。
+ * Swift 側でこの値が 0 より大きければ文節ごとのアンダーライン描画を行う。
+ * Returns 0 if session is NULL.
+ */
+uint32_t karukan_get_segment_count(const KarukanSession* session);
+
+/**
+ * BunsetsuConversion 状態の文節 index の現在表示テキストの文字数 (NSString 長) を返す。
+ *
+ * 日本語文字は全て BMP 範囲のため chars().count() == NSString.length。
+ * Returns 0 if session is NULL, not in BunsetsuConversion, or index is out of range.
+ */
+uint32_t karukan_get_segment_char_count(const KarukanSession* session, uint32_t index);
+
+/**
+ * BunsetsuConversion 状態の現在選択中の文節インデックスを返す。
+ *
+ * Returns 0 if session is NULL or not in BunsetsuConversion.
+ */
+uint32_t karukan_get_selected_segment(const KarukanSession* session);
 
 /* -------------------------------------------------------------------------
  * Live conversion
