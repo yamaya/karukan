@@ -84,6 +84,13 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
     /// validateMenuItem で変換ショートカット項目のグレーアウト制御に使う。
     private var isComposing = false
 
+    /// setMarkedText で非空テキストをセットした状態かどうか。
+    /// deactivateServer 内で setMarkedText("") の呼び出しを
+    /// 「実際に marked text がある場合のみ」に制限するために使う。
+    /// （Empty 状態からの直接コミット直後に setMarkedText("") を呼ぶと
+    ///  直前の insertText がキャンセルされる app があるため）
+    private var hasPreedit: Bool = false
+
     // -----------------------------------------------------------------------
     // MARK: - Lifecycle
     // -----------------------------------------------------------------------
@@ -453,10 +460,21 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
             return
         }
         // sessionFinished 経由だと sender が無効な場合があるため、
-        // クライアント操作（insertText/setMarkedText）は行わず Rust 側の状態だけリセットする。
+        // insertText は行わず Rust 側の状態だけリセットする。
+        // ただし hasPreedit が true の場合（marked text をアプリに送信済み）は
+        // setMarkedText("") を呼んでアプリ側の stale marked text をクリアする。
+        // こうしないと 英数 → かな の際にアプリが旧 marked text を確定して 0x10 等が入る。
         if karukan_is_empty(session) == 0 {
             _ = karukan_push_key(session, KarukanMacOSKey.returnKey.rawValue)
             _ = karukan_has_commit(session)  // commit テキストを消費して捨てる
+        }
+        if hasPreedit {
+            (sender as AnyObject).setMarkedText?(
+                "",
+                selectionRange: NSRange(location: 0, length: 0),
+                replacementRange: NSRange(location: NSNotFound, length: 0)
+            )
+            hasPreedit = false
         }
         karukan_save_learning(session)
         super.deactivateServer(sender)
@@ -466,7 +484,11 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
         logger.info("commitComposition")
         candidatesPanel?.hide()
         forceCommit(client: sender)
-        super.commitComposition(sender)
+        // super.commitComposition は呼ばない:
+        // macOS は 英数/かなキー切替時に commitComposition を自動呼び出しする。
+        // Apple 基底クラスは handle() で消費した かな/英数キー（char = 0x10 DLE）を
+        // 内部バッファに保持し、commitComposition 時に client へ flush する。
+        // forceCommit で必要なテキストは自前で挿入済みのため super は不要かつ有害。
     }
 
     // -----------------------------------------------------------------------
@@ -500,8 +522,12 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
             }
         }
 
-        let preeditText = karukan_get_preedit(session).map { String(cString: $0) } ?? ""
+        let rawPreedit = karukan_get_preedit(session).map { String(cString: $0) } ?? ""
+        // 制御文字（U+0000–U+001F, U+007F 等）を preedit から除去（Swift 側防御）。
+        // Rust 側の apply_live_candidate フィルタの補完。setMarkedText に制御文字が渡らないことを保証。
+        let preeditText = String(rawPreedit.unicodeScalars.filter { $0.value >= 0x20 })
         isComposing = !preeditText.isEmpty
+        hasPreedit = !preeditText.isEmpty
 
         if preeditText.isEmpty {
             c.setMarkedText?(
@@ -805,6 +831,7 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
             selectionRange: NSRange(location: 0, length: 0),
             replacementRange: NSRange(location: NSNotFound, length: 0)
         )
+        hasPreedit = false
     }
 
     // -----------------------------------------------------------------------

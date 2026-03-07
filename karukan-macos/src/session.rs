@@ -510,6 +510,15 @@ impl KarukanSession {
         let effective = self
             .lookup_live_override(source)
             .unwrap_or_else(|| candidate.to_string());
+        // 制御文字を除去する。全文字が除去された場合は raw ひらがな（source）にフォールバック。
+        // preedit.text に制御文字が残ると setMarkedText("0x10...") → setMarkedText("") の連鎖で
+        // 一部のアプリが制御文字を commit してしまうため。
+        let effective: String = effective.chars().filter(|c| !c.is_control()).collect();
+        let effective = if effective.is_empty() {
+            source.to_string()
+        } else {
+            effective
+        };
         self.live_candidate = Some(effective.clone());
         self.live_candidate_source = source.to_string();
         // preedit = 変換済みテキスト + 未確定ローマ字バッファ
@@ -848,6 +857,8 @@ impl KarukanSession {
         self.romaji.reset();
         self.state = SessionState::Empty;
 
+        // 制御文字を除去（学習キャッシュ汚染や予期せぬモデル出力からの防御）。
+        let committed: String = committed.chars().filter(|c| !c.is_control()).collect();
         self.commit.text = CString::new(committed).unwrap_or_default();
         self.commit.dirty = true;
         self.update_preedit("");
@@ -1209,6 +1220,8 @@ impl KarukanSession {
                 cache.record(hiragana, display);
             }
         }
+        // 制御文字を除去（学習キャッシュ汚染や予期せぬモデル出力からの防御）。
+        let committed: String = committed.chars().filter(|c| !c.is_control()).collect();
         self.commit.text = CString::new(committed).unwrap_or_default();
         self.commit.dirty = true;
         self.candidate_cache.items.clear();
@@ -1245,8 +1258,11 @@ impl KarukanSession {
         // 1. Learning cache (highest priority)
         if let Some(cache) = &self.learning {
             let results = cache.lookup(hiragana);
-            if let Some((surface, _score)) = results.first() {
-                return Some(surface.clone());
+            for (surface, _score) in &results {
+                let clean: String = surface.chars().filter(|c| !c.is_control()).collect();
+                if !clean.is_empty() {
+                    return Some(clean);
+                }
             }
         }
 
@@ -1254,7 +1270,10 @@ impl KarukanSession {
         if let Some(dict) = &self.user_dict {
             if let Some(lr) = dict.exact_match_search(hiragana) {
                 if let Some(c) = lr.candidates.first() {
-                    return Some(c.surface.clone());
+                    let clean: String = c.surface.chars().filter(|c| !c.is_control()).collect();
+                    if !clean.is_empty() {
+                        return Some(clean);
+                    }
                 }
             }
         }
@@ -1264,13 +1283,21 @@ impl KarukanSession {
 
     /// Collect conversion candidates: Learning → User Dict → Model → System Dict.
     fn collect_candidates(&self, hiragana: &str) -> Vec<String> {
+        // ASCII を含む入力はモデルに渡さない（byte-level BPE デコードで制御文字が生成される）。
+        // karukan_convert_top1 と同じ防御策。
+        if hiragana.chars().any(|c| c.is_ascii()) {
+            return vec![hiragana.to_string()];
+        }
+
         let mut result: Vec<String> = Vec::new();
 
         // 1. Learning cache (highest priority — user's own history).
         if let Some(cache) = &self.learning {
             for (surface, _score) in cache.lookup(hiragana) {
-                if !result.contains(&surface) {
-                    result.push(surface);
+                // 過去バグで制御文字が記録されている可能性があるためフィルタする。
+                let clean: String = surface.chars().filter(|c| !c.is_control()).collect();
+                if !clean.is_empty() && !result.contains(&clean) {
+                    result.push(clean);
                 }
             }
         }

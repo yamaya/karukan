@@ -45,7 +45,15 @@ impl LearningCache {
     }
 
     /// Record a user selection. Increments frequency and updates last_access.
+    ///
+    /// 制御文字を含む surface は記録しない（byte-level BPE デコード artefact 対策）。
     pub fn record(&mut self, reading: &str, surface: &str) {
+        // 制御文字を除去して clean surface を作る。control char しかない場合はスキップ。
+        let clean_surface: String = surface.chars().filter(|c| !c.is_control()).collect();
+        if clean_surface.is_empty() {
+            return;
+        }
+        let surface = clean_surface.as_str();
         let now = now_unix();
         let entries = self.entries.entry(reading.to_string()).or_default();
 
