@@ -678,6 +678,20 @@ impl KarukanSession {
                 false
             }
 
+            // ── BunsetsuConversion state で Ctrl+K/J → 選択文節のみ変換 ──────────
+            KarukanKey::ConvertKatakana
+                if matches!(self.state, SessionState::BunsetsuConversion(_)) =>
+            {
+                self.do_convert_segment_katakana();
+                true
+            }
+            KarukanKey::ConvertHiragana
+                if matches!(self.state, SessionState::BunsetsuConversion(_)) =>
+            {
+                self.do_convert_segment_hiragana();
+                true
+            }
+
             // ── Convert shortcuts (Composing + Conversion) ───────────────
             // convert_preview は do_convert 内で管理する
             KarukanKey::ConvertHiragana => {
@@ -1021,6 +1035,39 @@ impl KarukanSession {
     /// Ctrl+;: 半角英数に逆変換して確定（ライブ変換中はプレビュー→確定の2段階）。
     fn do_convert_ascii(&mut self) {
         self.do_convert(ConvertPreview::Ascii);
+    }
+
+    /// 文節変換中に Ctrl+K: 選択文節のみカタカナに変換して display に設定（確定しない）。
+    fn do_convert_segment_katakana(&mut self) {
+        self.do_convert_segment_kana(false);
+    }
+
+    /// 文節変換中に Ctrl+J: 選択文節の display を元のひらがな読みに戻す（確定しない）。
+    fn do_convert_segment_hiragana(&mut self) {
+        self.do_convert_segment_kana(true);
+    }
+
+    fn do_convert_segment_kana(&mut self, to_hiragana: bool) {
+        let SessionState::BunsetsuConversion(ref mut conv) = self.state else {
+            return;
+        };
+        let sel = conv.selected;
+        if let Some(seg) = conv.segments.get_mut(sel) {
+            seg.display = if to_hiragana {
+                seg.hiragana.clone()
+            } else {
+                karukan_engine::kana::hiragana_to_katakana(&seg.hiragana)
+            };
+        }
+        let preedit_text: String = conv.segments.iter().map(|s| s.display.as_str()).collect();
+        let caret_bytes: usize = conv.segments[..=sel]
+            .iter()
+            .map(|s| s.display.len())
+            .sum();
+        self.preedit.text = CString::new(preedit_text.as_str()).unwrap_or_default();
+        self.preedit.caret_bytes = caret_bytes as u32;
+        self.preedit.dirty = true;
+        self.candidate_cache.items.clear();
     }
 
     // -----------------------------------------------------------------------
