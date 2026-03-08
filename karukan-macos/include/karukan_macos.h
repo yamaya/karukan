@@ -50,6 +50,8 @@ typedef enum {
     KARUKAN_KEY_CONVERT_HIRAGANA  = 10,  /* Ctrl+J */
     KARUKAN_KEY_CONVERT_KATAKANA  = 11,  /* Ctrl+K */
     KARUKAN_KEY_CONVERT_ASCII     = 12,  /* Ctrl+; */
+    KARUKAN_KEY_SHRINK_SEGMENT    = 13,  /* Ctrl+I / Shift+Left */
+    KARUKAN_KEY_EXTEND_SEGMENT    = 14,  /* Ctrl+O / Shift+Right */
 } KarukanKey;
 
 /* -------------------------------------------------------------------------

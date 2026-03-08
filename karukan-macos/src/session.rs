@@ -120,6 +120,8 @@ pub enum KarukanKey {
     ConvertHiragana = 10,
     ConvertKatakana = 11,
     ConvertAscii = 12,
+    ShrinkSegment = 13,
+    ExtendSegment = 14,
 }
 
 impl KarukanKey {
@@ -138,6 +140,8 @@ impl KarukanKey {
             10 => Some(Self::ConvertHiragana),
             11 => Some(Self::ConvertKatakana),
             12 => Some(Self::ConvertAscii),
+            13 => Some(Self::ShrinkSegment),
+            14 => Some(Self::ExtendSegment),
             _ => None,
         }
     }
@@ -774,6 +778,18 @@ impl KarukanSession {
                 // パネル表示中は Swift/IMKCandidates が処理。消費だけする。
                 true
             }
+            KarukanKey::ShrinkSegment
+                if matches!(self.state, SessionState::BunsetsuConversion(_)) =>
+            {
+                self.resize_segment(-1);
+                true
+            }
+            KarukanKey::ExtendSegment
+                if matches!(self.state, SessionState::BunsetsuConversion(_)) =>
+            {
+                self.resize_segment(1);
+                true
+            }
 
             _ => false,
         }
@@ -1170,6 +1186,87 @@ impl KarukanSession {
         };
         let _ = new_selected; // used above via conv.selected
         // 候補パネルを隠す
+        self.candidate_cache.items.clear();
+        self.candidate_cache.cursor = 0;
+        self.preedit.text = CString::new(preedit_text.as_str()).unwrap_or_default();
+        self.preedit.caret_bytes = caret_bytes as u32;
+        self.preedit.dirty = true;
+    }
+
+    /// 選択文節の境界を1文字分変更する（文節伸縮）。
+    ///
+    /// `delta > 0` (ExtendSegment / Ctrl+O / Shift+Right):
+    ///   次の文節の先頭1文字を現在の文節末尾に追加する。
+    ///   次の文節が空になった場合は削除する。
+    ///
+    /// `delta < 0` (ShrinkSegment / Ctrl+I / Shift+Left):
+    ///   現在の文節の末尾1文字を取り出し、新しい独立した文節として sel+1 に挿入する。
+    ///   後続の文節はそのまま後ろへずれる（内容は変更しない）。
+    ///   現在の文節が1文字以下なら何もしない（最小1文字制約）。
+    fn resize_segment(&mut self, delta: i32) {
+        let (sel, preedit_text, caret_bytes) = match &mut self.state {
+            SessionState::BunsetsuConversion(conv) => {
+                let sel = conv.selected;
+                if delta > 0 {
+                    // 延ばす: 次の文節の先頭1文字を現在の文節末尾へ
+                    if sel + 1 >= conv.segments.len() {
+                        return;
+                    }
+                    let ch = match conv.segments[sel + 1].hiragana.chars().next() {
+                        Some(c) => c,
+                        None => return,
+                    };
+                    conv.segments[sel].hiragana.push(ch);
+                    conv.segments[sel].display = conv.segments[sel].hiragana.clone();
+                    conv.segments[sel].candidates.clear();
+
+                    let remaining: String =
+                        conv.segments[sel + 1].hiragana.chars().skip(1).collect();
+                    if remaining.is_empty() {
+                        conv.segments.remove(sel + 1);
+                    } else {
+                        conv.segments[sel + 1].hiragana = remaining.clone();
+                        conv.segments[sel + 1].display = remaining;
+                        conv.segments[sel + 1].candidates.clear();
+                    }
+                } else {
+                    // 縮める: 現在の文節の末尾1文字を次の文節先頭へ
+                    if conv.segments[sel].hiragana.chars().count() <= 1 {
+                        return;
+                    }
+                    let popped = conv.segments[sel].hiragana.chars().last().unwrap();
+                    let new_current: String = {
+                        let mut s = conv.segments[sel].hiragana.clone();
+                        s.pop();
+                        s
+                    };
+                    conv.segments[sel].hiragana = new_current.clone();
+                    conv.segments[sel].display = new_current;
+                    conv.segments[sel].candidates.clear();
+
+                    let mut popped_str = String::new();
+                    popped_str.push(popped);
+                    // 常に新しい独立した文節として挿入する。
+                    // 後続の文節はそのまま後ろへずれ、内容は変更しない。
+                    conv.segments.insert(
+                        sel + 1,
+                        BunsetsuSegment {
+                            hiragana: popped_str.clone(),
+                            display: popped_str,
+                            candidates: vec![],
+                        },
+                    );
+                }
+
+                let text: String =
+                    conv.segments.iter().map(|s| s.display.as_str()).collect();
+                let caret: usize =
+                    conv.segments[..=sel].iter().map(|s| s.display.len()).sum();
+                (sel, text, caret)
+            }
+            _ => return,
+        };
+        let _ = sel;
         self.candidate_cache.items.clear();
         self.candidate_cache.cursor = 0;
         self.preedit.text = CString::new(preedit_text.as_str()).unwrap_or_default();

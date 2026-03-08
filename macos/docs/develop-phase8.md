@@ -21,6 +21,8 @@
 | Escape | BunsetsuConversion（パネル表示中） | 候補パネルを閉じる（文節ナビは継続） |
 | Escape | BunsetsuConversion（パネル非表示） | 変換キャンセル → Composing（ひらがな復元） |
 | Backspace | BunsetsuConversion | 変換キャンセル → Composing → 末尾1文字削除 |
+| Ctrl+O / Shift+Right | BunsetsuConversion | 選択文節を1文字延ばす（次の文節先頭1文字を移動） |
+| Ctrl+I / Shift+Left | BunsetsuConversion | 選択文節を1文字縮める（末尾1文字を次の文節先頭へ移動） |
 
 ### 表示
 
@@ -394,6 +396,48 @@ if !preeditText.isEmpty && segmentCount > 0 {
 | `karukan-macos/include/karukan_macos.h` | 3 関数の C 宣言を追加 |
 | `macos/KarukanIM/KarukanIM/KarukanInputController.swift` | パネル表示中 Left/Right ハンドリング、`candidateSelected` / `candidateSelectionChanged` / `updateClientState` 更新 |
 
+### 文節伸縮（追加実装）
+
+| ファイル | 変更内容 |
+|---|---|
+| `karukan-macos/include/karukan_macos.h` | `KARUKAN_KEY_SHRINK_SEGMENT = 13`, `KARUKAN_KEY_EXTEND_SEGMENT = 14` を追加 |
+| `karukan-macos/src/session.rs` | `KarukanKey` enum に `ShrinkSegment`/`ExtendSegment` を追加、`resize_segment()` メソッド実装、`push_key()` に match arm 追加 |
+| `macos/KarukanIM/KarukanIM/KarukanInputController.swift` | `KarukanMacOSKey` に `shrinkSegment`/`extendSegment` 追加、Ctrl+I/O および Shift+Left/Right のハンドリングを追加 |
+
+---
+
+---
+
+## 文節伸縮の実装詳細
+
+### `resize_segment(delta: i32)` — `session.rs`
+
+`move_segment` と同じパターン（可変借用 → 計算 → 解放 → preedit 更新）で実装。
+
+**Extend (delta > 0 / Ctrl+O / Shift+Right):**
+- 次の文節が存在しない場合は no-op（最後の文節は延ばせない）
+- 次の文節の先頭1文字を現在の文節末尾に追加
+- `display = hiragana`, `candidates.clear()` で遅延ロードをリセット
+- 次の文節が空になれば `segments.remove(sel + 1)`
+
+**Shrink (delta < 0 / Ctrl+I / Shift+Left):**
+- 現在の文節が1文字以下の場合は no-op（最小1文字制約）
+- 現在の文節の末尾1文字を取り出し、**新しい独立した文節として `sel+1` に insert する**
+- 後続の既存文節はそのまま後ろへずれ、内容・候補は変更しない
+- 縮まった現在の文節は `display = hiragana`, `candidates.clear()` でリセット
+
+いずれも `candidate_cache` をクリアしてパネルを隠し、preedit を全文節で再構築する。
+
+### Swift キーハンドリングの設計
+
+| パス | Ctrl+I / Ctrl+O | Shift+Left / Shift+Right |
+|---|---|---|
+| 候補パネル表示中（Ctrl ブロック） | `shrinkSegment` / `extendSegment` を送信、パネルを閉じる | — |
+| 候補パネル表示中（case 123/124） | — | Shift 修飾を検出して `shrinkSegment` / `extendSegment` を送信 |
+| 通常パス（line 275 の control guard より前） | BunsetsuConversion 状態のときのみ消費、それ以外は `return false` | BunsetsuConversion 状態のときのみ消費、それ以外は `return false` |
+
+BunsetsuConversion 状態の検出は `karukan_get_segment_count(session) > 0` で行う。Ctrl+I/O を非変換状態で飲み込まないことで、テキストエディタ等への影響を防ぐ。
+
 ---
 
 ## 追加不要なもの
@@ -435,4 +479,14 @@ cargo test -p karukan-macos
 # 8. Return（パネル非表示）→ 全文節を確定コミット
 # 9. Escape（パネル表示中）→ パネルを閉じて文節ナビへ
 # 10. Escape（パネル非表示）→ Composing（ひらがな）に戻る
+
+# 文節伸縮シナリオ
+# 11. "わたしはがっこうへいきます" + Space → 文節分割後、Ctrl+O → 最初の文節が1文字延びる
+# 12. Shift+Right → 同上（Ctrl+O と同じ動作）
+# 13. Ctrl+I → 文節が1文字縮み、縮んだ1文字が次の文節先頭へ移動
+# 14. Shift+Left → 同上（Ctrl+I と同じ動作）
+# 15. 1文字の文節で Ctrl+I → 何も起きない（クラッシュしない）
+# 16. 最後の文節で Ctrl+O → 何も起きない（クラッシュしない）
+# 17. 候補パネル表示中に Ctrl+O / Shift+Right → パネルが閉じて文節拡大
+# 18. Empty / Composing 状態で Ctrl+I / Ctrl+O → アプリにパススルー
 ```

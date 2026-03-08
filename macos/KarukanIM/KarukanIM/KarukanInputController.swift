@@ -164,6 +164,8 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
                    case 38: return .convertHiragana
                    case 40: return .convertKatakana
                    case 41: return .convertAscii
+                   case 34: return .shrinkSegment   // Ctrl+I
+                   case 31: return .extendSegment   // Ctrl+O
                    default: return nil
                    }
                })() {
@@ -184,14 +186,22 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
                 _ = karukan_push_key(session, KarukanMacOSKey.escape.rawValue)
                 updateClientState(client: sender)
                 panel.hide()
-            case 123: // Left → 候補パネルを閉じて前の文節へ
+            case 123: // Left / Shift+Left → 候補パネルを閉じて前の文節へ / 文節縮小
                 guard let session else { return true }
-                _ = karukan_push_key(session, KarukanMacOSKey.leftArrow.rawValue)
+                if event.modifierFlags.contains(.shift) {
+                    _ = karukan_push_key(session, KarukanMacOSKey.shrinkSegment.rawValue)
+                } else {
+                    _ = karukan_push_key(session, KarukanMacOSKey.leftArrow.rawValue)
+                }
                 updateClientState(client: sender)
                 panel.hide()
-            case 124: // Right → 候補パネルを閉じて次の文節へ
+            case 124: // Right / Shift+Right → 候補パネルを閉じて次の文節へ / 文節拡大
                 guard let session else { return true }
-                _ = karukan_push_key(session, KarukanMacOSKey.rightArrow.rawValue)
+                if event.modifierFlags.contains(.shift) {
+                    _ = karukan_push_key(session, KarukanMacOSKey.extendSegment.rawValue)
+                } else {
+                    _ = karukan_push_key(session, KarukanMacOSKey.rightArrow.rawValue)
+                }
                 updateClientState(client: sender)
                 panel.hide()
             case 49: // Space / Shift-Space
@@ -260,6 +270,34 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
             updateClientState(client: sender)
             candidatesPanel?.hide()
             return true
+        }
+
+        // Ctrl+I / Shift+Left: 文節縮小（BunsetsuConversion 状態のときのみ消費）
+        // 34 = kVK_ANSI_I, 123 = kVK_LeftArrow
+        if (event.keyCode == 34 && flags == [.control])
+            || (event.keyCode == 123 && flags.contains(.shift) && !flags.contains(.command))
+        {
+            if karukan_get_segment_count(session) > 0 {
+                _ = karukan_push_key(session, KarukanMacOSKey.shrinkSegment.rawValue)
+                updateClientState(client: sender)
+                candidatesPanel?.hide()
+                return true
+            }
+            return false
+        }
+
+        // Ctrl+O / Shift+Right: 文節拡大（BunsetsuConversion 状態のときのみ消費）
+        // 31 = kVK_ANSI_O, 124 = kVK_RightArrow
+        if (event.keyCode == 31 && flags == [.control])
+            || (event.keyCode == 124 && flags.contains(.shift) && !flags.contains(.command))
+        {
+            if karukan_get_segment_count(session) > 0 {
+                _ = karukan_push_key(session, KarukanMacOSKey.extendSegment.rawValue)
+                updateClientState(client: sender)
+                candidatesPanel?.hide()
+                return true
+            }
+            return false
         }
 
         // Option+/: 全角スラッシュ（44 = kVK_ANSI_Slash）
@@ -1068,6 +1106,8 @@ private enum KarukanMacOSKey: UInt32 {
     case convertHiragana = 10
     case convertKatakana = 11
     case convertAscii    = 12
+    case shrinkSegment   = 13  // KARUKAN_KEY_SHRINK_SEGMENT
+    case extendSegment   = 14  // KARUKAN_KEY_EXTEND_SEGMENT
 
     static func from(keyCode: UInt16) -> KarukanMacOSKey? {
         switch keyCode {
