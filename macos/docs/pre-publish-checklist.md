@@ -3,13 +3,11 @@
 **作成日**: 2026-03-08
 **対象ブランチ**: `epic/macos`
 
----
-
-## ブロッカー（push 前に必須）
+## ブロッカー（push 前に必須） ... 済み
 
 ### xcuserdata がトラッキングされている
 
-```
+```text
 macos/KarukanIM/KarukanIM.xcodeproj/xcuserdata/goron.xcuserdatad/xcschemes/xcschememanagement.plist
 ```
 
@@ -22,7 +20,6 @@ git rm --cached 'macos/KarukanIM/KarukanIM.xcodeproj/xcuserdata/goron.xcuserdata
 git commit -m "build(xcode): remove user-specific scheme configuration"
 ```
 
----
 
 ## 要検討（push 前に判断）
 
