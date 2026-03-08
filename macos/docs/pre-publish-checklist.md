@@ -30,7 +30,7 @@ git commit -m "build(xcode): remove user-specific scheme configuration"
 - OSS として公開する場合、このまま通すか実際のドメインに変えるかを決める
 - 変更箇所: `macos/KarukanIM/KarukanIM/Info.plist`、`macos/KarukanIM/KarukanIMExtension/Info.plist`、`project.pbxproj`
 
-### `macos/docs/security-audit.md` が未追跡
+### `macos/docs/security-audit.md` が未追跡 ... 済み
 
 - `git status` に `??` で表示されている
 - コミットする / `.gitignore` に追加する / 削除する、どれかに決める
