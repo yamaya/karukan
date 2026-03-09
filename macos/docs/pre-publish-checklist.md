@@ -34,10 +34,10 @@ git commit -m "build(xcode): remove user-specific scheme configuration"
 - `git status` に `??` で表示されている
 - コミットする / `.gitignore` に追加する / 削除する、どれかに決める
 
-### `macos/docs/develop-phase*.md` が公開される
+### `macos/docs/develop-phase*.md` が公開される ... 済み
 
-- 開発経緯メモがそのまま公開リポジトリに入る
-- 問題なければそのままでよいが、内部向けと判断するなら `.gitignore` に追加
+- 開発経緯メモとして公開する方針で確定
+- コードブロックを除去し、状態遷移図・フロー図を Mermaid に書き直し済み
 
 ### リモートが `git@github.com:yamaya/karukan.git`
 

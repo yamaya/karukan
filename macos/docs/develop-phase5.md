@@ -62,27 +62,14 @@ Phase 5 では IME としての完成度を日常利用レベルに引き上げ�
 
 ### 設定基盤: SettingStore + UserDefaults
 
-```swift
-enum SettingStore {
-    static let suiteName = "com.example.inputmethod.KarukanIM"
-    static var defaults: UserDefaults {
-        UserDefaults(suiteName: suiteName) ?? .standard
-    }
-}
-```
+`SettingStore` は `UserDefaults(suiteName:)` をラップした共有ストアで、
+IME の Swift コードから設定値を読み書きする。
+設定値は computed property で毎回 UserDefaults から読み取るため、
+メニューから変更した値は次のキー入力時に自動的に反映される。
 
-IME 側は computed property で毎回 UserDefaults から読み取る:
-
-```swift
-private var consonantDelaySec: TimeInterval {
-    let v = SettingStore.defaults.double(forKey: SettingStore.consonantDelaySecKey)
-    return v > 0 ? v : 0.1
-}
-private var autoCommitMaxChars: Int {
-    let v = SettingStore.defaults.integer(forKey: SettingStore.autoCommitMaxCharsKey)
-    return v > 0 ? v : 30
-}
-```
+- `SettingStore.defaults` — suiteName 付きの `UserDefaults` インスタンスを返す
+- `consonantDelaySec` — `karukanConsonantDelaySecKey` の値を読む（未設定時は `0.1`）
+- `autoCommitMaxChars` — `karukanAutoCommitMaxCharsKey` の値を読む（未設定時は `30`）
 
 ### テスト要件
 
@@ -116,73 +103,40 @@ macOS 標準の日本語入力では以下のショートカットが使える�
 
 ### 設計方針
 
-- Rust 側に新しいキーコードを追加する（`KARUKAN_KEY_CONVERT_HIRAGANA` 等）
+- Rust 側に新しいキーコード（`KARUKAN_KEY_CONVERT_HIRAGANA` 等）を追加する
 - Swift 側は修飾キー + keyCode を検出して対応する `karukan_push_key` を呼ぶ
 - Rust 側で `input_buf.text` を変換してコミットする
 
 ### Rust 側変更
 
-#### `KarukanKey` enum に追加
+#### `KarukanKey` enum への追加
 
-```rust
-// karukan-macos/src/ffi/mod.rs
-KARUKAN_KEY_CONVERT_HIRAGANA  = 10,
-KARUKAN_KEY_CONVERT_KATAKANA  = 11,
-KARUKAN_KEY_CONVERT_ASCII     = 12,
-```
+`karukan-macos/src/ffi/mod.rs` に以下の3つのキーコードを追加する:
+
+| 定数名 | 値 | 用途 |
+|---|---|---|
+| `KARUKAN_KEY_CONVERT_HIRAGANA` | `10` | Ctrl+J — ひらがな確定 |
+| `KARUKAN_KEY_CONVERT_KATAKANA` | `11` | Ctrl+K — カタカナ確定 |
+| `KARUKAN_KEY_CONVERT_ASCII` | `12` | Ctrl+; — 半角英数確定 |
 
 #### `session.rs` — 変換コミット処理（プレビューモード対応）
 
 ライブ変換中に Ctrl+J/K/; を押すと即コミットせず、まずプレビュー表示（preedit をひらがな/カタカナ/英数に切替）する。同じキーをもう一度押すと確定する。異なるキーを押すとモードが切り替わる（Escape の2段階動作と同じ思想）。
 
-```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ConvertPreview {
-    Hiragana,
-    Katakana,
-    Ascii,
-}
+処理フローは以下の通り:
 
-/// Ctrl+J/K/; 共通: プレビュー → 確定の2段階処理。
-fn do_convert(&mut self, mode: ConvertPreview) {
-    self.restore_hiragana_if_conversion();
-
-    // ライブ変換中 or 別モードプレビュー中 → プレビュー表示のみ
-    let should_preview =
-        self.live_candidate.is_some() || matches!(self.convert_preview, Some(m) if m != mode);
-
-    if should_preview {
-        self.live_candidate = None;
-        self.convert_preview = Some(mode);
-        let preedit_text = match mode {
-            ConvertPreview::Hiragana => format!("{}{}", self.input_buf.text, self.romaji.buffer()),
-            ConvertPreview::Katakana => {
-                let katakana = karukan_engine::kana::hiragana_to_katakana(&self.input_buf.text);
-                format!("{}{}", katakana, self.romaji.buffer())
-            }
-            ConvertPreview::Ascii => {
-                let romaji = hiragana_to_romaji(&self.input_buf.text);
-                format!("{}{}", romaji, self.romaji.buffer())
-            }
-        };
-        self.update_preedit(&preedit_text);
-        return;
-    }
-
-    // 同じモード2回目 or ライブ変換なし → 確定
-    self.convert_preview = None;
-    self.flush_romaji();
-    if self.input_buf.text.is_empty() { return; }
-
-    let committed = match mode {
-        ConvertPreview::Hiragana => std::mem::take(&mut self.input_buf.text),
-        ConvertPreview::Katakana => hiragana_to_katakana(&self.input_buf.text),
-        ConvertPreview::Ascii => hiragana_to_romaji(&self.input_buf.text),
-    };
-    // ... clear + commit ...
-}
+```mermaid
+stateDiagram-v2
+    [*] --> Composing: 文字入力
+    Composing --> Preview: Ctrl+J/K/；（ライブ変換中 or 別モードプレビュー中）
+    Preview --> Preview: 別のCtrl+J/K/；（モード切替）
+    Preview --> Committed: 同じCtrl+J/K/；（2回目）
+    Composing --> Committed: Ctrl+J/K/；（ライブ変換なし・プレビューなし）
+    Preview --> Composing: 文字入力 / Enter / Escape / Backspace / Space
+    Committed --> [*]
 ```
 
+`convert_preview` フィールドで現在のプレビューモード（Hiragana / Katakana / Ascii）を管理する。
 `convert_preview` は文字入力・Enter・Escape・Backspace・Space でクリアされる。
 
 #### `session.rs` — ひらがな→ローマ字逆変換テーブル
@@ -190,65 +144,12 @@ fn do_convert(&mut self, mode: ConvertPreview) {
 `karukan-engine` の `rules.rs` と同じルール一覧から逆引きテーブルを構築する。
 `karukan-engine` は変更禁止のため、`karukan-macos` 側に逆変換ロジックを持つ。
 
-```rust
-use std::collections::HashMap;
-use once_cell::sync::Lazy;
+逆変換テーブルの設計方針:
 
-/// ひらがな→ローマ字の逆引きテーブル。
-/// karukan-engine の rules.rs と同一のマッピングを逆方向にしたもの。
-/// 複数のローマ字表記がある場合は最も一般的なものを採用（例: "し" → "si" ではなく "shi"）。
-static REVERSE_ROMAJI: Lazy<Vec<(&str, &str)>> = Lazy::new(|| {
-    let mut table = vec![
-        // 長い方を先に並べる（最長一致のため）
-        ("きゃ", "kya"), ("きゅ", "kyu"), ("きょ", "kyo"),
-        ("しゃ", "sha"), ("しゅ", "shu"), ("しょ", "sho"),
-        ("ちゃ", "cha"), ("ちゅ", "chu"), ("ちょ", "cho"),
-        // ... 拗音・特殊音を先に定義 ...
-        // 単独かな
-        ("あ", "a"), ("い", "i"), ("う", "u"), ("え", "e"), ("お", "o"),
-        ("か", "ka"), ("き", "ki"), ("く", "ku"), ("け", "ke"), ("こ", "ko"),
-        ("さ", "sa"), ("し", "shi"), ("す", "su"), ("せ", "se"), ("そ", "so"),
-        ("た", "ta"), ("ち", "chi"), ("つ", "tsu"), ("て", "te"), ("と", "to"),
-        ("な", "na"), ("に", "ni"), ("ぬ", "nu"), ("ね", "ne"), ("の", "no"),
-        ("は", "ha"), ("ひ", "hi"), ("ふ", "fu"), ("へ", "he"), ("ほ", "ho"),
-        ("ま", "ma"), ("み", "mi"), ("む", "mu"), ("め", "me"), ("も", "mo"),
-        ("や", "ya"), ("ゆ", "yu"), ("よ", "yo"),
-        ("ら", "ra"), ("り", "ri"), ("る", "ru"), ("れ", "re"), ("ろ", "ro"),
-        ("わ", "wa"), ("を", "wo"), ("ん", "nn"),
-        ("っ", "xtu"),
-        // ... 完全なテーブルは実装時に rules.rs から生成 ...
-    ];
-    // ひらがなの長い順にソート（最長一致）
-    table.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
-    table
-});
-
-impl KarukanSession {
-    fn hiragana_to_romaji(&self, hiragana: &str) -> String {
-        let mut result = String::new();
-        let chars: Vec<char> = hiragana.chars().collect();
-        let mut i = 0;
-        while i < chars.len() {
-            let remaining = &hiragana[chars[..i].iter().map(|c| c.len_utf8()).sum::<usize>()..];
-            let mut matched = false;
-            for &(kana, romaji) in REVERSE_ROMAJI.iter() {
-                if remaining.starts_with(kana) {
-                    result.push_str(romaji);
-                    i += kana.chars().count();
-                    matched = true;
-                    break;
-                }
-            }
-            if !matched {
-                // テーブルにないかな（句読点等）はそのまま
-                result.push(chars[i]);
-                i += 1;
-            }
-        }
-        result
-    }
-}
-```
+- `REVERSE_ROMAJI` を `Vec<(&str, &str)>` として `Lazy` で初期化（ひらがな → ローマ字）
+- 拗音・特殊音（「きゃ」→`kya`、「しゃ」→`sha` 等）を単独かなより先に定義し、最長一致を保証
+- ひらがなの文字列長の降順にソートする
+- テーブルに存在しないかな（句読点等）はそのまま出力に渡す
 
 > **「ん」の扱い**: `nn` を採用（`n` 単独だと次の文字と結合する可能性があるため）。
 > 厳密には後続文字によって `n` / `nn` を切り替えるべきだが、Phase 5 では `nn` 固定とする。
@@ -261,43 +162,23 @@ impl KarukanSession {
 > Ctrl+J/K/; のチェックは**この早期リターンより前に配置する**必要がある。
 > Ctrl+Shift+L（既存）と同じ位置に並べる。
 
-```swift
-let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+各ショートカットの処理は次の手順で行う:
 
-// Ctrl+J: ひらがな確定（38 = kVK_ANSI_J）
-if event.keyCode == 38, flags == [.control] {
-    _ = karukan_push_key(session, KarukanMacOSKey.convertHiragana.rawValue)
-    updateClientState(client: sender)
-    candidatesPanel?.hide()
-    return true
-}
+- 修飾キーフラグと keyCode の組み合わせを検出する（J=38、K=40、;=41）
+- 対応する `karukan_push_key` を呼び出す
+- `updateClientState` で preedit を更新する
+- 候補パネルを非表示にする
+- `true` を返してキーイベントを消費する
 
-// Ctrl+K: カタカナ確定（40 = kVK_ANSI_K）
-if event.keyCode == 40, flags == [.control] {
-    _ = karukan_push_key(session, KarukanMacOSKey.convertKatakana.rawValue)
-    updateClientState(client: sender)
-    candidatesPanel?.hide()
-    return true
-}
+### `KarukanMacOSKey` enum への追加
 
-// Ctrl+Shift+L: ライブ変換トグル（37 = kVK_ANSI_L）— 既存
+Swift 側の `KarukanMacOSKey` enum に以下の3ケースを追加する:
 
-// Ctrl+;: 半角英数（41 = kVK_ANSI_Semicolon）
-if event.keyCode == 41, flags == [.control] {
-    _ = karukan_push_key(session, KarukanMacOSKey.convertAscii.rawValue)
-    updateClientState(client: sender)
-    candidatesPanel?.hide()
-    return true
-}
-```
-
-### `KarukanMacOSKey` enum に追加
-
-```swift
-case convertHiragana = 10
-case convertKatakana = 11
-case convertAscii    = 12
-```
+| case | rawValue | 対応キー |
+|---|---|---|
+| `convertHiragana` | `10` | Ctrl+J |
+| `convertKatakana` | `11` | Ctrl+K |
+| `convertAscii` | `12` | Ctrl+; |
 
 ### テスト要件
 
@@ -328,51 +209,14 @@ case convertAscii    = 12
 
 #### Swift 側変更
 
-`IMKInputController.menu()` をオーバーライドして `NSMenu` を返す:
+`IMKInputController.menu()` をオーバーライドして `NSMenu` を返す。
+実装のポイントは以下の通り:
 
-```swift
-override func menu() -> NSMenu! {
-    let menu = NSMenu(title: "Karukan")
-
-    // ライブ変換トグル
-    let liveItem = NSMenuItem(
-        title: "ライブ変換",
-        action: #selector(toggleLiveConversion(_:)),
-        keyEquivalent: ""
-    )
-    liveItem.state = isLiveConversionEnabled ? .on : .off
-    menu.addItem(liveItem)
-
-    menu.addItem(.separator())
-
-    // 設定画面を開く
-    let prefItem = NSMenuItem(
-        title: "設定...",
-        action: #selector(openPreferences(_:)),
-        keyEquivalent: ""
-    )
-    menu.addItem(prefItem)
-
-    return menu
-}
-
-@objc func toggleLiveConversion(_ sender: Any) {
-    isLiveConversionEnabled.toggle()
-    logger.info("live conversion toggled via menu: \(self.isLiveConversionEnabled ? "enabled" : "disabled")")
-    if !isLiveConversionEnabled, let session {
-        _ = karukan_push_key(session, KarukanMacOSKey.escape.rawValue)
-        updateClientState(client: currentSender ?? client())
-    }
-}
-
-@objc func openPreferences(_ sender: Any) {
-    // Preference Pane を含むシステム環境設定を開く
-    // macOS 15+: キーボード設定に直接遷移
-    if let url = URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension") {
-        NSWorkspace.shared.open(url)
-    }
-}
-```
+- 「ライブ変換」トグル: `isLiveConversionEnabled` の状態をチェックマークで反映し、
+  `toggleLiveConversion` アクションで `UserDefaults` を更新する。
+  ライブ変換を無効化するときは Escape キーイベントを Rust に送って変換をキャンセルする。
+- 「設定...」: `x-apple.systempreferences:com.apple.Keyboard-Settings.extension` URL を
+  `NSWorkspace.shared.open` で開き、キーボード設定に直接遷移する。
 
 > **`menu()` の呼び出しタイミング**: メニューを開くたびに呼ばれるため、
 > `isLiveConversionEnabled` のチェックマーク状態は常に最新になる。
@@ -411,26 +255,11 @@ karukan でも「あ」のカスタムアイコンを表示したい。
 
 ### Info.plist 変更（Extension）
 
-`ComponentInputModeDict` の入力モード定義にアイコンキーを追加する:
+`ComponentInputModeDict` の入力モード定義にアイコンキーを追加する。
+変更内容のポイント:
 
-```xml
-<key>com.example.inputmethod.karukan.hiragana</key>
-<dict>
-    <key>TISInputSourceIsASCIICapable</key>
-    <false/>
-    <key>TISInputSourceType</key>
-    <string>com.apple.input-method.Roman</string>
-    <key>TsInputMethodCharacterRepertoireKey</key>
-    <array>
-        <string>Latn</string>
-        <string>Hira</string>
-        <string>Kana</string>
-    </array>
-    <!-- アイコンファイル名（拡張子なし、Resources/ からの相対パス） -->
-    <key>tsInputModeMenuIconFileKey</key>
-    <string>hiragana</string>
-</dict>
-```
+- `com.example.inputmethod.karukan.hiragana` 辞書に `tsInputModeMenuIconFileKey` キーを追加
+- 値は `hiragana`（拡張子なし、Resources/ からの相対パス）
 
 ### アイコン作成
 
@@ -587,28 +416,17 @@ T3: インジケーターアイコン
 #### Rust 側: 自動コミット判定 (session.rs)
 
 Empty 状態（composing 開始前）から記号が入力された場合、
-preedit を経由せず直接コミットする:
+preedit を経由せず直接コミットする。
 
-```rust
-// `push_char()` 内で、romaji → hiragana 変換後
-let started_empty = matches!(self.state, SessionState::Empty);
-let romaji_buf_check = self.romaji.buffer();
+判定条件は以下の全てを満たす場合:
 
-if started_empty
-    && romaji_buf_check.is_empty()
-    && new_hiragana.chars().count() == 1
-    && !is_hiragana_char(new_hiragana.chars().next().unwrap())
-{
-    // 記号は即座にコミット
-    self.commit.text = CString::new(new_hiragana.as_str()).unwrap_or_default();
-    self.commit.dirty = true;
-    self.romaji.reset();
-    self.input_buf.clear();
-    self.state = SessionState::Empty;
-    self.update_preedit("");
-    return true;
-}
-```
+- セッションが Empty 状態で開始していること
+- romaji バッファが空であること
+- ローマ字変換後のひらがなが1文字であること
+- その文字がひらがな文字でないこと（`is_hiragana_char` で判定）
+
+条件を満たす場合、変換結果を直接 `commit.text` に設定して `dirty = true` にし、
+romaji・input_buf・preedit をリセットして Empty 状態に戻る。
 
 ひらがな判定: `is_hiragana_char()` で U+3041–U+3096, U+309D–U+309F, U+30FC (ー) をチェック。
 
@@ -620,30 +438,11 @@ macOS IMKit では、preedit がない状態（Empty → Empty 直接コミッ�
 insertText がキャンセルされてしまう場合がある。
 
 対策: `hasPreedit: Bool` フラグで、実際に marked text を設定したときのみ
-`setMarkedText("")` を呼ぶ:
+`setMarkedText("")` を呼ぶ。
 
-```swift
-private var hasPreedit: Bool = false
-
-// preedit 設定時
-if preeditText.isEmpty {
-    if hasPreedit {
-        c.setMarkedText?(
-            "",
-            selectionRange: NSRange(location: 0, length: 0),
-            replacementRange: NSRange(location: NSNotFound, length: 0)
-        )
-        hasPreedit = false
-    }
-} else {
-    hasPreedit = true
-    // ... attributed string を生成して setMarkedText を呼ぶ ...
-}
-```
-
-リセット箇所:
-- `deactivateServer(_:)` 内で `hasPreedit = false`
-- `forceCommit()` 内で `hasPreedit = false`
+- `hasPreedit = true` にするのは non-empty の preedit を `setMarkedText` で設定したとき
+- `hasPreedit = true` のときのみ preedit クリアの `setMarkedText("")` を呼び、呼んだ後 `false` に戻す
+- `deactivateServer(_:)` と `forceCommit()` 内で `hasPreedit = false` にリセットする
 
 ### テスト済み
 

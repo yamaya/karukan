@@ -10,7 +10,7 @@ Linux 版 (`karukan-im`) では既にユーザー辞書が完全実装されて�
 
 ### TSV フォーマット (Mozc/Google IME 互換)
 
-```tsv
+```text
 # karukan ユーザー辞書
 # ヨミ<TAB>表層形<TAB>品詞<TAB>コメント
 # 品詞・コメントは省略可能
@@ -41,12 +41,14 @@ Linux 版 (`karukan-im`) では既にユーザー辞書が完全実装されて�
 
 ### 候補優先度
 
-```text
-1. 学習キャッシュ (Learning)
-2. ユーザー辞書  (UserDictionary)  ← 新規追加
-3. ニューラルモデル (Model)
-4. システム辞書 (Dictionary)
-5. フォールバック (ひらがな/カタカナ)
+```mermaid
+flowchart TD
+    A["1. 学習キャッシュ (Learning)"]
+    B["2. ユーザー辞書 (UserDictionary)　← 新規追加"]
+    C["3. ニューラルモデル (Model)"]
+    D["4. システム辞書 (Dictionary)"]
+    E["5. フォールバック (ひらがな/カタカナ)"]
+    A --> B --> C --> D --> E
 ```
 
 Linux 版と同一の優先度順。
@@ -63,161 +65,64 @@ Linux 版と同一の優先度順。
 
 **ファイル**: `karukan-macos/src/session.rs`
 
-`KarukanSession` 構造体に `user_dict` フィールドを追加:
+`KarukanSession` 構造体に以下を追加する:
 
-```rust
-pub struct KarukanSession {
-    // ... 既存フィールド ...
-    dict: Option<karukan_engine::Dictionary>,
-    user_dict: Option<karukan_engine::Dictionary>,  // ← 追加
-    // ...
-}
-```
-
-`new()` で `user_dict: None` を初期化。
+- `user_dict: Option<karukan_engine::Dictionary>` フィールドを既存の `dict` フィールドの直後に追加
+- `new()` コンストラクタで `user_dict: None` として初期化
 
 ### Step 2: `init_resources()` でユーザー辞書をロード
 
 **ファイル**: `karukan-macos/src/session.rs`
 
-`init_resources()` に以下のロジックを追加（システム辞書ロードの直後）:
+システム辞書ロードの直後に、以下のロジックを追加する。Linux 版 `init.rs:init_user_dictionaries()` とほぼ同じ実装:
 
-```rust
-// User dictionaries (optional — scan user_dicts/ directory)
-let user_dict_dir = paths::user_dict_dir();
-if user_dict_dir.exists() {
-    if let Ok(entries) = std::fs::read_dir(&user_dict_dir) {
-        let mut paths: Vec<std::path::PathBuf> = entries
-            .filter_map(|e| e.ok())
-            .map(|e| e.path())
-            .filter(|p| p.is_file())
-            .collect();
-        paths.sort();
-
-        let mut dicts = Vec::new();
-        for path in &paths {
-            match karukan_engine::Dictionary::load_auto(path) {
-                Ok(dict) => {
-                    tracing::info!("Loaded user dictionary from {:?}", path);
-                    dicts.push(dict);
-                }
-                Err(e) => tracing::warn!("Failed to load user dictionary {:?}: {}", path, e),
-            }
-        }
-
-        if !dicts.is_empty() {
-            match karukan_engine::Dictionary::merge(dicts) {
-                Ok(Some(merged)) => {
-                    tracing::info!("User dictionaries merged ({} files)", paths.len());
-                    self.user_dict = Some(merged);
-                }
-                Ok(None) => {}
-                Err(e) => tracing::warn!("Failed to merge user dictionaries: {}", e),
-            }
-        }
-    }
-}
-```
-
-Linux 版 `init.rs:init_user_dictionaries()` とほぼ同じロジック。
+- `paths::user_dict_dir()` でディレクトリパスを取得し、存在確認
+- ディレクトリ内のファイル一覧をアルファベット順にソート
+- 各ファイルに対して `Dictionary::load_auto(path)` を実行
+  - 成功: `dicts` ベクタに追加し `tracing::info!` でログ出力
+  - 失敗: `tracing::warn!` でスキップ
+- `dicts` が空でなければ `Dictionary::merge(dicts)` で統合し `self.user_dict` に格納
 
 ### Step 3: `build_candidates()` にユーザー辞書を組み込む
 
 **ファイル**: `karukan-macos/src/session.rs`
 
-現在の `build_candidates()` (L928付近):
+現在の `build_candidates()` (L928付近) の候補収集順は以下の通り:
 
-```text
-1. Learning cache
-2. Neural model (beam search)
-3. System dictionary
+```mermaid
+flowchart TD
+    A["変換前"] --> B["1. Learning cache"]
+    B --> C["2. Neural model (beam search)"]
+    C --> D["3. System dictionary"]
+    D --> E["フォールバック (ひらがな)"]
 ```
 
-これを以下に変更:
+これを以下の順序に変更する:
 
-```text
-1. Learning cache
-2. User dictionary      ← 追加
-3. Neural model (beam search)
-4. System dictionary
-5. フォールバック (ひらがな)
+```mermaid
+flowchart TD
+    A["変換後"] --> B["1. Learning cache"]
+    B --> C["2. User dictionary　← 追加"]
+    C --> D["3. Neural model (beam search)"]
+    D --> E["4. System dictionary"]
+    E --> F["5. フォールバック (ひらがな)"]
 ```
 
-具体的な変更:
+具体的な変更点:
 
-```rust
-fn build_candidates(&self, hiragana: &str) -> Vec<String> {
-    let mut result: Vec<String> = Vec::new();
-
-    // 1. Learning cache (highest priority)
-    if let Some(cache) = &self.learning {
-        for (surface, _score) in cache.lookup(hiragana) {
-            if !result.contains(&surface) {
-                result.push(surface);
-            }
-        }
-    }
-
-    // 2. User dictionary (higher than model/system dict)
-    if let Some(dict) = &self.user_dict {
-        if let Some(lr) = dict.exact_match_search(hiragana) {
-            for c in &lr.candidates {
-                if !result.contains(&c.surface) {
-                    result.push(c.surface.clone());
-                }
-            }
-        }
-    }
-
-    // 3. Neural model candidates (beam search)
-    if let Some(conv) = &self.converter {
-        match conv.convert(hiragana, "", 9) {
-            Ok(model_cands) => {
-                for c in model_cands {
-                    if !result.contains(&c) {
-                        result.push(c);
-                    }
-                }
-            }
-            Err(e) => tracing::warn!("KanaKanjiConverter::convert failed: {}", e),
-        }
-    }
-
-    // 4. System dictionary
-    if let Some(dict) = &self.dict {
-        if let Some(lr) = dict.exact_match_search(hiragana) {
-            for c in lr.candidates.iter().take(5) {
-                if !result.contains(&c.surface) {
-                    result.push(c.surface.clone());
-                }
-            }
-        }
-    }
-
-    // 5. Fallback
-    if result.is_empty() {
-        result.push(hiragana.to_string());
-    }
-    result
-}
-```
+- Learning cache 検索の直後、Neural model 検索の直前に `self.user_dict` の `exact_match_search(hiragana)` を呼び出す
+- 取得した候補を重複排除しながら `result` ベクタに追加する
+- それ以外の既存ロジック（1, 3, 4, 5 のステップ）はそのまま維持
 
 ### Step 4: テスト
 
 **ファイル**: `karukan-macos/src/session.rs` (既存テストモジュールに追加)
 
-```rust
-#[test]
-fn test_user_dict_loaded_and_prioritized() {
-    // KARUKAN_DATA_DIR を一時ディレクトリに設定
-    // user_dicts/ に TSV ファイルを作成
-    // init_resources() を呼び出し
-    // build_candidates() でユーザー辞書エントリが
-    //   モデル・システム辞書より前に出ることを確認
-}
-```
+テストケースの方針:
 
-- `KARUKAN_DATA_DIR` 環境変数でテスト用ディレクトリを使用
+- `KARUKAN_DATA_DIR` 環境変数でテスト用一時ディレクトリを指定
+- `user_dicts/` 以下に TSV ファイルを作成して `init_resources()` を呼び出す
+- `build_candidates()` でユーザー辞書エントリがモデル・システム辞書より前に出ることを確認
 - モデルなし（`converter: None`）でも辞書候補が正しく返ることを確認
 - 空ディレクトリ、不正ファイル、複数ファイルのケースをカバー
 

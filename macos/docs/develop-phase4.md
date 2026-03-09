@@ -43,41 +43,15 @@ Phase 4 では 3.5 の引き継ぎ事項を解消し、日常的に使える品�
 
 **プロパティ追加**
 
-```swift
-private var isLiveConversionEnabled: Bool {
-    get { UserDefaults.standard.bool(forKey: "karukanLiveConversionEnabled") }
-    set { UserDefaults.standard.set(newValue, forKey: "karukanLiveConversionEnabled") }
-}
-```
-
-起動時のデフォルト値（初回）は `true`。`applicationDidFinishLaunching` 相当のタイミングで
-`UserDefaults.standard.register(defaults: ["karukanLiveConversionEnabled": true])` を呼ぶ。
+`isLiveConversionEnabled` は `UserDefaults` の `karukanLiveConversionEnabled` キーに紐付いた算出プロパティとして実装する。起動時のデフォルト値（初回）は `true` とし、`applicationDidFinishLaunching` 相当のタイミングで `register(defaults:)` を呼んで初期値を登録する。
 
 **`handle(_:client:)` での分岐**
 
-```swift
-// 文字入力後にライブ変換をトリガー
-if consumed && isLiveConversionEnabled {
-    triggerLiveConversion(sender: sender)
-}
-```
+文字入力後、`isLiveConversionEnabled` が `true` の場合のみ `triggerLiveConversion` を呼び出す。`false` の場合は preedit の更新のみ行う。
 
 **トグルキー処理**
 
-```swift
-// handle(_:client:) の特殊キー処理ブロック内
-if event.modifiers.contains([.control, .shift]),
-   event.keyCode == kVK_ANSI_L {
-    isLiveConversionEnabled.toggle()
-    logger.info("live conversion: \(isLiveConversionEnabled ? "enabled" : "disabled")")
-    // ライブ無効化時は現在の live_candidate をクリア
-    if !isLiveConversionEnabled, let session {
-        _ = karukan_push_key(session, KarukanMacOSKey.escape.rawValue)
-        updateClientState(client: sender)
-    }
-    return true
-}
-```
+`handle(_:client:)` の特殊キー処理ブロック内で Ctrl+Shift+L を検出し、フラグをトグルする。ライブ変換を無効化した際は現在の live_candidate を破棄するため、Escape キーを Rust に送って状態をクリーンにする。
 
 #### テスト要件
 
@@ -108,27 +82,9 @@ Phase 4 では以下の段階的アプローチを取る：
 
 #### Phase 4 での実装
 
-`triggerLiveConversion` の自動コミット部分を改良する。
+`triggerLiveConversion` の自動コミット部分を改良する。ひらがな文字数が `kLiveConversionMaxChars` を超えた場合、変換済みの漢字列から `extractFirstClause` で先頭文節を抽出してコミットし、残りをそのまま継続入力として扱う。境界が見つからない場合は全体をコミットするフォールバックに倒す。
 
-```swift
-// 自動コミット時: 境界を推定してコミット
-if hiragana.count > Self.kLiveConversionMaxChars {
-    // candidate は漢字全体（例: "私は学校へ行きます"）
-    // 先頭の文節のみコミットして残りを継続入力とする
-    let commitPart = extractFirstClause(kanji: candidate, hiragana: hiragana)
-    if !commitPart.isEmpty {
-        _ = karukan_push_key(session, KarukanMacOSKey.returnKey.rawValue)
-        // TODO: 残りの hiragana を新規 composing として push する
-    } else {
-        // 境界が見つからない場合は全体をコミット（現状と同じ）
-        _ = karukan_push_key(session, KarukanMacOSKey.returnKey.rawValue)
-    }
-    self.updateClientState(client: sender ?? self.client())
-}
-```
-
-`extractFirstClause` は助詞（は・が・を・に・で・へ・と・も・の）または句読点を
-境界として最初の文節末尾を検出する簡易実装。
+`extractFirstClause` は助詞（は・が・を・に・で・へ・と・も・の）または句読点を境界として最初の文節末尾を検出する簡易実装。
 
 #### テスト要件
 
@@ -151,32 +107,14 @@ if hiragana.count > Self.kLiveConversionMaxChars {
 
 **OSLog で推論時間を計測する**（Instruments を使わない簡易版）
 
-`triggerLiveConversion` に計測ログを追加：
+`triggerLiveConversion` のバックグラウンドキュー内で、`karukan_convert_top1` の呼び出し前後に `CFAbsoluteTimeGetCurrent()` で経過時間を計測し、文字数・推論時間（ms）・生成トークン数を info レベルの OSLog に出力する。
 
-```swift
-DispatchQueue.global(qos: .userInitiated).async { [self] in
-    guard liveConversionSemaphore.wait(timeout: .now()) == .success else { return }
-    defer { liveConversionSemaphore.signal() }
+ログ取得は以下のコマンドで行う：
 
-    let start = CFAbsoluteTimeGetCurrent()
-    let resultPtr = karukan_convert_top1(session, hiragana)
-    let elapsed = CFAbsoluteTimeGetCurrent() - start
+- サブシステム `com.example.karukan`、カテゴリ `InputController`、info レベル以上を対象にストリーミング
+- `grep "live infer"` で推論ログのみ抽出
 
-    logger.info("live convert: \(hiragana.count)chars, \(String(format: "%.0f", elapsed * 1000))ms")
-    // ...
-}
-```
-
-ログ取得コマンド:
-
-```bash
-log stream \
-  --predicate 'subsystem == "com.example.karukan" AND category == "InputController"' \
-  --level info \
-  | grep "live infer"
-```
-
-出力例:
+出力例（テキスト形式）：
 
 ```text
 live infer: 5chars 312ms gen=3
@@ -256,28 +194,22 @@ Errors found! Invalidating cache...
 
 ### ライブ変換フロー（Phase 4 以降）
 
-```text
-[メインスレッド] push_char('x')
-    │
-    ├─ input_buf 更新（input_buf.text = "にほんごの...")
-    ├─ isLiveConversionEnabled が false → preedit 更新のみ（ライブ変換スキップ）
-    └─ isLiveConversionEnabled が true  → triggerLiveConversion()
-           │
-           ├─ セマフォ: 1件のみ（スキップ or 待機）
-           │
-           ▼
-   [DispatchQueue.global]
-    計測開始
-    karukan_convert_top1(session, hiragana)
-    計測終了 → OSLog
-           │
-           ▼ 結果: "日本語の..."
-   [DispatchQueue.main.async]
-    guard liveConversionGeneration == gen   ← stale 廃棄
-    karukan_apply_live_candidate(session, candidate)
-    if hiragana.count > kLiveConversionMaxChars
-        → 文節分割コミット（T2）または全体コミット
-    updateClientState()
+```mermaid
+flowchart TD
+    A["[メインスレッド] push_char('x')"] --> B["input_buf 更新<br>(input_buf.text = 'にほんごの...')"]
+    B --> C{isLiveConversionEnabled?}
+    C -- false --> D["preedit 更新のみ<br>(ライブ変換スキップ)"]
+    C -- true --> E["triggerLiveConversion()"]
+    E --> F{"セマフォ取得<br>(1件のみ)"}
+    F -- スキップ --> G[処理なし]
+    F -- 取得成功 --> H["[DispatchQueue.global]<br>計測開始<br>karukan_convert_top1(session, hiragana)<br>計測終了 → OSLog"]
+    H --> I{"liveConversionGeneration<br>一致確認"}
+    I -- stale 廃棄 --> G
+    I -- 有効 --> J["karukan_apply_live_candidate<br>(session, candidate)"]
+    J --> K{"hiragana.count ><br>kLiveConversionMaxChars?"}
+    K -- true --> L["文節分割コミット (T2)<br>または全体コミット"]
+    K -- false --> M["updateClientState()"]
+    L --> M
 ```
 
 ### 設定ファイルとの統合（将来）

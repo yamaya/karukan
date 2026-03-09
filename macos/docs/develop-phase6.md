@@ -6,36 +6,39 @@
 ## 実装
 
 ### 1. 新規ターゲット追加: KarukanPreferences（SwiftUI App）
+
 - `macos/KarukanIM/KarukanPreferences/` ディレクトリ作成
 - ファイル:
-  - `KarukanPreferencesApp.swift` — SwiftUI App エントリポイント（単一ウィンドウ）
-  - `SettingsView.swift` — `@AppStorage` + suite UserDefaults で3設定を管理
+    - `KarukanPreferencesApp.swift` — SwiftUI App エントリポイント（単一ウィンドウ）
+    - `SettingsView.swift` — `@AppStorage` + suite UserDefaults で3設定を管理
 - `project.pbxproj` に新ターゲット追加（macOS App, SwiftUI lifecycle）
 
 ### 2. SettingsView の設計
-```
+
+```text
 ┌─ Karukan 設定 ──────────────────────┐
-│                                      │
-│  ライブ変換           [Toggle ON/OFF]│
-│                                      │
-│  子音遅延             ──●────  0.10秒│
-│                                      │
-│  自動コミット閾値     [- 30 文字 +]  │
-│                                      │
-└──────────────────────────────────────┘
+│                                     │
+│  ライブ変換          [Toggle ON/OFF]│
+│                                     │
+│  子音遅延           ──●────  0.10秒│
+│                                     │
+│  自動コミット閾値    [- 30 文字 +]  │
+│                                     │
+└─────────────────────────────────────┘
 ```
+
 - `@AppStorage` + `UserDefaults(suiteName: "com.example.inputmethod.KarukanIM")` で既存の `SettingStore` と同じ suite を使用
 - キー名: `karukanLiveConversionEnabled`, `karukanConsonantDelaySec`, `karukanAutoCommitMaxChars`
 
 ### 3. ホストアプリに埋め込み
 - KarukanIM（ホストアプリ）の Build Phases に Copy Files Phase 追加
-  - Destination: Resources
-  - KarukanPreferences.app をコピー
+    - Destination: Resources
+    - KarukanPreferences.app をコピー
 - Target Dependency: KarukanIM → KarukanPreferences
 
 ### 4. 入力メニューから起動
 - `KarukanInputController.swift` の `openPreferences(_:)` を変更:
-  - appex から host app を逆引きして `Contents/Resources/KarukanPreferences.app` を `NSWorkspace.shared.open()` で起動
+    - appex から host app を逆引きして `Contents/Resources/KarukanPreferences.app` を `NSWorkspace.shared.open()` で起動
 
 ### 5. 旧 Preferences prefPane の削除
 - Preferences ターゲットを pbxproj から削除

@@ -46,22 +46,33 @@
 
 ### 変更前
 
-```
-Empty → Composing → Conversion(ConversionState)
-                    ├── candidates: Vec<String>
-                    ├── hiragana: String
-                    └── cursor: usize
+```mermaid
+stateDiagram-v2
+    [*] --> Empty
+    Empty --> Composing
+    Composing --> Conversion
+    state Conversion {
+        candidates: Vec~String~
+        hiragana: String
+        cursor: usize
+    }
 ```
 
 ### 変更後
 
-```
-Empty → Composing → BunsetsuConversion(BunsetsuConversionState)
-                    ├── segments: Vec<BunsetsuSegment>
-                    │   ├── hiragana: String
-                    │   ├── display: String
-                    │   └── candidates: Vec<String>
-                    └── selected: usize
+```mermaid
+stateDiagram-v2
+    [*] --> Empty
+    Empty --> Composing
+    Composing --> BunsetsuConversion
+    state BunsetsuConversion {
+        state segments {
+            hiragana: String
+            display: String
+            candidates: Vec~String~
+        }
+        selected: usize
+    }
 ```
 
 候補パネルの表示/非表示は `candidate_cache.items` の空/非空で制御（既存方式を踏襲）。
@@ -81,7 +92,7 @@ Empty → Composing → BunsetsuConversion(BunsetsuConversionState)
 
 **例**:
 
-```
+```text
 "わたしはがっこうへいきます"
 → ["わたしは", "がっこうへ", "いきます"]
 
@@ -102,32 +113,13 @@ Empty → Composing → BunsetsuConversion(BunsetsuConversionState)
 
 `ConversionState` / `SessionState::Conversion` を削除し、新しい型に置き換える:
 
-```rust
-struct BunsetsuSegment {
-    hiragana: String,
-    display: String,
-    candidates: Vec<String>,
-}
-
-struct BunsetsuConversionState {
-    segments: Vec<BunsetsuSegment>,
-    selected: usize,
-}
-
-enum SessionState {
-    Empty,
-    Composing,
-    BunsetsuConversion(BunsetsuConversionState),
-}
-```
+- `BunsetsuSegment` 構造体: `hiragana: String`、`display: String`、`candidates: Vec<String>` の3フィールド
+- `BunsetsuConversionState` 構造体: `segments: Vec<BunsetsuSegment>` と `selected: usize` を保持
+- `SessionState` enum: `Empty`、`Composing`、`BunsetsuConversion(BunsetsuConversionState)` の3バリアント
 
 ### Step 2: `session.rs` — `segment_hiragana()` 自由関数を追加
 
-```rust
-/// ひらがな文字列を助詞境界で文節に分割する。
-/// 助詞はその前の文節に含める。分割できなければ全体を 1 要素で返す。
-fn segment_hiragana(hiragana: &str) -> Vec<String> { ... }
-```
+ひらがな文字列を助詞境界で文節に分割する自由関数 `segment_hiragana(hiragana: &str) -> Vec<String>` を追加する。
 
 実装のポイント:
 - `chars()` でイテレート。最低 1 文字はセグメントに含める
@@ -136,11 +128,7 @@ fn segment_hiragana(hiragana: &str) -> Vec<String> { ... }
 
 ### Step 3: `session.rs` — `do_conversion()` を置き換える
 
-`do_conversion_impl(start_at_last: bool)` を実装し、`do_conversion()` はそのラッパーとする:
-
-```rust
-fn do_conversion(&mut self) { self.do_conversion_impl(false); }
-```
+`do_conversion_impl(start_at_last: bool)` を実装し、`do_conversion()` はそのラッパーとする。
 
 `do_conversion_impl` の処理:
 
@@ -157,32 +145,19 @@ fn do_conversion(&mut self) { self.do_conversion_impl(false); }
 
 ### Step 4: `session.rs` — `push_key()` を更新
 
-`SessionState::Conversion` のハンドラを `BunsetsuConversion` に置き換える:
+`SessionState::Conversion` のハンドラを `BunsetsuConversion` に置き換える。各キーの処理:
 
-```
-Return     → commit_bunsetsu_all()
-Escape     → candidate_cache が空なら cancel_bunsetsu()、非空なら candidate_cache.clear()
-Backspace  → cancel_bunsetsu() + do_backspace()
-Left       → move_segment(-1)
-Right      → move_segment(1)
-Space/Tab/Down → show_segment_candidates()
-Up         → consume（true を返す）
-```
+| キー | 処理 |
+|---|---|
+| Return | `commit_bunsetsu_all()` |
+| Escape | `candidate_cache` が空なら `cancel_bunsetsu()`、非空なら `candidate_cache.clear()` |
+| Backspace | `cancel_bunsetsu()` + `do_backspace()` |
+| Left | `move_segment(-1)` |
+| Right | `move_segment(1)` |
+| Space / Tab / Down | `show_segment_candidates()` |
+| Up | 消費（`true` を返す） |
 
-**Composing 状態での Left 追加処理**:
-
-```rust
-KarukanKey::Left
-    if matches!(self.state, SessionState::Composing)
-        && self.live_candidate.is_some() =>
-{
-    // ライブ変換中 Left: 最後の文節を選択状態で BunsetsuConversion に入る
-    self.do_conversion_impl(/*start_at_last=*/ true);
-    true
-}
-```
-
-ライブ変換がない Composing 状態での Left は引き続き `false` を返し、アプリに委ねる（ひらがなカーソル移動）。
+**Composing 状態での Left 追加処理**: ライブ変換中（`live_candidate.is_some()`）に Left が押されたとき、`do_conversion_impl(start_at_last: true)` を呼び出して最後の文節を選択状態で BunsetsuConversion に入る。ライブ変換がない Composing 状態での Left は引き続き `false` を返し、アプリに委ねる（ひらがなカーソル移動）。
 
 `push_char()` での `cancel_conversion()` 呼び出しも `cancel_bunsetsu()` に置き換える。
 
@@ -190,188 +165,95 @@ KarukanKey::Left
 
 #### `move_segment(delta: i32)`
 
-```rust
-fn move_segment(&mut self, delta: i32) {
-    // selected を ±1（clamp）
-    // candidate_cache を空にする（パネルを隠す）
-    // preedit を全文節の display で更新（caret = 選択文節末尾）
-}
-```
+- `selected` を ±1（clamp）
+- `candidate_cache` を空にする（パネルを隠す）
+- preedit を全文節の `display` で更新（caret = 選択文節末尾）
 
 #### `show_segment_candidates()`
 
-```rust
-fn show_segment_candidates(&mut self) {
-    // segments[selected].candidates を candidate_cache に設定
-}
-```
+- `segments[selected].candidates` を `candidate_cache` に設定する
 
 #### `commit_bunsetsu_all()`
 
-```rust
-fn commit_bunsetsu_all(&mut self) {
-    // 全 segments の display を結合してコミット
-    // display != hiragana の文節を学習キャッシュに記録
-    // SessionState::Empty へ遷移
-}
-```
+- 全 `segments` の `display` を結合してコミット
+- `display != hiragana` の文節を学習キャッシュに記録
+- `SessionState::Empty` へ遷移
 
 #### `cancel_bunsetsu()`
 
-```rust
-fn cancel_bunsetsu(&mut self) {
-    // segments の hiragana を結合してひらがな文字列を復元
-    // SessionState::Composing へ遷移し、preedit をひらがなで更新
-}
-```
+- `segments` の `hiragana` を結合してひらがな文字列を復元
+- `SessionState::Composing` へ遷移し、preedit をひらがなで更新
 
 ### Step 6: `session.rs` — `select_candidate()` を更新
 
-```rust
-pub fn select_candidate(&mut self, index: usize) -> bool {
-    // BunsetsuConversion 状態の場合:
-    //   segments[selected].display を更新
-    //   学習キャッシュに記録
-    //   candidate_cache を空にする（パネルを隠す）
-    //   commit.dirty = false のまま（コミットしない）
-    //   preedit を更新して返す
-    // （他の状態は false を返す）
-}
-```
+`BunsetsuConversion` 状態の場合の処理:
+
+- `segments[selected].display` を選択候補で更新
+- 学習キャッシュに記録
+- `candidate_cache` を空にする（パネルを隠す）
+- `commit.dirty = false` のまま（コミットしない）
+- preedit を更新して返す
 
 Swift の `candidateSelected` が `karukan_has_commit() == 0` を確認してパネルを隠し `updateClientState` を呼ぶことで、段階的な文節選択 UI を実現する。
 
 ### Step 7: `session.rs` — クエリメソッドを追加
 
-```rust
-pub fn segment_count(&self) -> usize { ... }
-pub fn selected_segment(&self) -> usize { ... }
-pub fn segment_char_count(&self, index: usize) -> usize { ... }
-```
+以下の3つのクエリメソッドを追加する:
 
-`segment_char_count` は **`display` の `chars().count()`** を返す（UTF-16 BMP 範囲の日本語文字は 1 コードポイント = 1 NSString 文字）。
+- `segment_count(&self) -> usize`: `BunsetsuConversion` 状態のセグメント数（非変換状態なら 0）
+- `selected_segment(&self) -> usize`: 現在選択中のセグメントインデックス
+- `segment_char_count(&self, index: usize) -> usize`: セグメント `index` の `display` の `chars().count()`（UTF-16 BMP 範囲の日本語文字は 1 コードポイント = 1 NSString 文字）
 
 ### Step 8: `session.rs` — `restore_hiragana_if_conversion()` を更新
 
-`Conversion` → `BunsetsuConversion` に対応させる:
-
-```rust
-fn restore_hiragana_if_conversion(&mut self) {
-    let hiragana = match &self.state {
-        SessionState::BunsetsuConversion(conv) => {
-            Some(conv.segments.iter().map(|s| s.hiragana.as_str()).collect::<String>())
-        }
-        _ => None,
-    };
-    if let Some(hiragana) = hiragana { ... }
-}
-```
+`Conversion` を `BunsetsuConversion` に対応させる。`BunsetsuConversionState` の場合は `segments` 内の各 `hiragana` を結合してひらがな文字列を復元し、Composing 状態に戻す。
 
 ### Step 9: `ffi/query.rs` — セグメント情報 FFI を追加
 
-```rust
-#[unsafe(no_mangle)]
-pub extern "C" fn karukan_get_segment_count(session: *const KarukanSession) -> u32 { ... }
+以下の3つの C FFI 関数を追加する:
 
-#[unsafe(no_mangle)]
-pub extern "C" fn karukan_get_segment_char_count(
-    session: *const KarukanSession,
-    index: u32,
-) -> u32 { ... }
-
-#[unsafe(no_mangle)]
-pub extern "C" fn karukan_get_selected_segment(session: *const KarukanSession) -> u32 { ... }
-```
+- `karukan_get_segment_count(session: *const KarukanSession) -> u32`
+- `karukan_get_segment_char_count(session: *const KarukanSession, index: u32) -> u32`
+- `karukan_get_selected_segment(session: *const KarukanSession) -> u32`
 
 ### Step 10: `karukan_macos.h` — ヘッダーに宣言を追加
 
-```c
-/** BunsetsuConversion 状態のセグメント数を返す。0 なら非文節変換状態。 */
-uint32_t karukan_get_segment_count(const KarukanSession* session);
+以下の3関数の C 宣言を追加する:
 
-/** セグメント index の現在表示テキストの文字数（NSString 長）を返す。 */
-uint32_t karukan_get_segment_char_count(const KarukanSession* session, uint32_t index);
-
-/** 現在選択中のセグメントインデックスを返す。 */
-uint32_t karukan_get_selected_segment(const KarukanSession* session);
-```
+| 関数シグネチャ | 説明 |
+|---|---|
+| `uint32_t karukan_get_segment_count(const KarukanSession* session)` | BunsetsuConversion 状態のセグメント数を返す。0 なら非文節変換状態。 |
+| `uint32_t karukan_get_segment_char_count(const KarukanSession* session, uint32_t index)` | セグメント index の現在表示テキストの文字数（NSString 長）を返す。 |
+| `uint32_t karukan_get_selected_segment(const KarukanSession* session)` | 現在選択中のセグメントインデックスを返す。 |
 
 ### Step 11: `KarukanInputController.swift` — 候補パネル表示中の Left/Right 処理
 
-候補パネル表示中のキーハンドリングブロックに追加:
+候補パネル表示中のキーハンドリングブロックに以下を追加する:
 
-```swift
-case 123: // Left → 候補パネルを閉じて前の文節へ
-    guard let session else { return true }
-    _ = karukan_push_key(session, KarukanMacOSKey.left.rawValue)
-    updateClientState(client: sender)
-    panel.hide()
-case 124: // Right → 候補パネルを閉じて次の文節へ
-    guard let session else { return true }
-    _ = karukan_push_key(session, KarukanMacOSKey.right.rawValue)
-    updateClientState(client: sender)
-    panel.hide()
-```
+- **Left（keyCode 123）**: `karukan_push_key` に `.left` を送信 → `updateClientState` → `panel.hide()`
+- **Right（keyCode 124）**: `karukan_push_key` に `.right` を送信 → `updateClientState` → `panel.hide()`
 
 ### Step 12: `KarukanInputController.swift` — `candidateSelected` を更新
 
-```swift
-override func candidateSelected(_ candidateString: NSAttributedString!) {
-    // ... インデックス逆引き・select_candidate 呼び出し（既存）...
+`karukan_has_commit(session)` の戻り値で処理を分岐する:
 
-    if karukan_has_commit(session) != 0 {
-        // 通常コミット（BunsetsuConversion 以外、または将来の全文節一括確定）
-        // ... 既存コード ...
-        c.setMarkedText?("", ...)
-    } else {
-        // 文節候補の確定: コミットなし、preedit を更新して文節ナビへ戻る
-        candidatesPanel?.hide()
-        updateClientState(client: c)
-    }
-}
-```
+- **コミットあり（非ゼロ）**: 既存の通常コミット処理を実行し、`setMarkedText("")` でマークを消す
+- **コミットなし（ゼロ）**: 文節候補の確定として、`candidatesPanel?.hide()` → `updateClientState` のみ実行し、文節ナビに戻る
 
 ### Step 13: `KarukanInputController.swift` — `candidateSelectionChanged` を更新
 
 候補パネルで矢印キーを動かしたとき、全文節を表示しつつ選択文節に候補テキストを反映する:
 
-```swift
-override func candidateSelectionChanged(_ candidateString: NSAttributedString!) {
-    guard let session else { return }
-    let segmentCount = Int(karukan_get_segment_count(session))
-
-    if segmentCount > 0 {
-        // 全文節テキストを構築（選択文節だけ候補テキストで上書き）
-        let selectedSeg = Int(karukan_get_selected_segment(session))
-        let segTexts = getSegmentTexts(session: session, segmentCount: segmentCount,
-                                        overrideIndex: selectedSeg,
-                                        overrideText: candidateString.string)
-        let attrStr = buildSegmentAttrStr(segTexts: segTexts, selectedSeg: selectedSeg)
-        let caretPos = segTexts[...selectedSeg].reduce(0) { $0 + $1.count }
-        c.setMarkedText?(attrStr, selectionRange: NSRange(location: caretPos, length: 0), ...)
-    } else {
-        // 既存の動作（単一文字列をアンダーライン付きで表示）
-    }
-}
-```
+- `karukan_get_segment_count` でセグメント数を取得
+- セグメントが存在する場合: `getSegmentTexts` で全文節テキストを構築し、選択文節だけ候補テキストで上書き → `buildSegmentAttrStr` で属性付き文字列を生成 → `setMarkedText` でキャレット位置を選択文節末尾に設定
+- セグメントがない場合: 既存の動作（単一文字列をアンダーライン付きで表示）
 
 ### Step 14: `KarukanInputController.swift` — `updateClientState` を更新
 
 `karukan_get_segment_count > 0` のとき、文節ごとに異なるアンダーラインを描画する:
 
-```swift
-let segmentCount = Int(karukan_get_segment_count(session))
-if !preeditText.isEmpty && segmentCount > 0 {
-    // 文節変換モード: thick / single アンダーラインを文節ごとに設定
-    let selectedSeg = Int(karukan_get_selected_segment(session))
-    let segTexts = getSegmentTexts(session: session, segmentCount: segmentCount)
-    let attrStr = buildSegmentAttrStr(segTexts: segTexts, selectedSeg: selectedSeg)
-    let caretPos = segTexts[...selectedSeg].reduce(0) { $0 + $1.count }
-    c.setMarkedText?(attrStr, selectionRange: NSRange(location: caretPos, length: 0), ...)
-} else if !preeditText.isEmpty {
-    // 既存の動作（単一アンダーライン）
-}
-```
+- セグメントが存在する場合: `getSegmentTexts` で全文節テキストを取得 → `buildSegmentAttrStr` で選択文節に thick、それ以外に single アンダーラインを設定 → キャレットを選択文節末尾に配置して `setMarkedText`
+- セグメントがない場合: 既存の動作（単一アンダーライン）
 
 #### ヘルパー関数
 
@@ -459,34 +341,36 @@ BunsetsuConversion 状態の検出は `karukan_get_segment_count(session) > 0` �
 
 ## 検証方法
 
-```bash
-# ビルド
-cargo build -p karukan-macos --release
-cd macos/KarukanIM && xcodebuild -scheme KarukanIMExtension build
+ビルドコマンド:
+- `cargo build -p karukan-macos --release` で Rust ライブラリをビルド
+- `xcodebuild -scheme KarukanIMExtension build` で Swift アプリをビルド
+- `cargo test -p karukan-macos` で Rust 単体テストを実行
 
-# テスト（Rust 単体）
-cargo test -p karukan-macos
+手動動作確認シナリオ:
 
-# 手動動作確認シナリオ
-# 1. "せんたく" + Space → 候補パネル表示、"選択" thick アンダーライン
-# 2. "わたしはがっこうへ" + Space → 2文節以上に分割、最初の文節選択
-# 2b. ライブ変換中に Left → 最後の文節を選択して BunsetsuConversion に入る
-# 3. Left → 前の文節に移動（パネルが隠れる）
-# 4. Right → 次の文節に移動
-# 5. Space → 選択文節の候補パネル表示
-# 6. ↓ → 次候補へ（preedit の選択文節が更新）
-# 7. Return → 文節候補を確定、文節ナビに戻る
-# 8. Return（パネル非表示）→ 全文節を確定コミット
-# 9. Escape（パネル表示中）→ パネルを閉じて文節ナビへ
-# 10. Escape（パネル非表示）→ Composing（ひらがな）に戻る
+| # | 操作 | 期待結果 |
+|---|---|---|
+| 1 | "せんたく" + Space | 候補パネル表示、"選択" に thick アンダーライン |
+| 2 | "わたしはがっこうへ" + Space | 2文節以上に分割、最初の文節選択 |
+| 2b | ライブ変換中に Left | 最後の文節を選択して BunsetsuConversion に入る |
+| 3 | BunsetsuConversion 中に Left | 前の文節に移動（パネルが隠れる） |
+| 4 | BunsetsuConversion 中に Right | 次の文節に移動 |
+| 5 | BunsetsuConversion 中に Space | 選択文節の候補パネル表示 |
+| 6 | パネル表示中に ↓ | 次候補へ（preedit の選択文節が更新） |
+| 7 | パネル表示中に Return | 文節候補を確定、文節ナビに戻る |
+| 8 | パネル非表示中に Return | 全文節を確定コミット |
+| 9 | パネル表示中に Escape | パネルを閉じて文節ナビへ |
+| 10 | パネル非表示中に Escape | Composing（ひらがな）に戻る |
 
-# 文節伸縮シナリオ
-# 11. "わたしはがっこうへいきます" + Space → 文節分割後、Ctrl+O → 最初の文節が1文字延びる
-# 12. Shift+Right → 同上（Ctrl+O と同じ動作）
-# 13. Ctrl+I → 文節が1文字縮み、縮んだ1文字が次の文節先頭へ移動
-# 14. Shift+Left → 同上（Ctrl+I と同じ動作）
-# 15. 1文字の文節で Ctrl+I → 何も起きない（クラッシュしない）
-# 16. 最後の文節で Ctrl+O → 何も起きない（クラッシュしない）
-# 17. 候補パネル表示中に Ctrl+O / Shift+Right → パネルが閉じて文節拡大
-# 18. Empty / Composing 状態で Ctrl+I / Ctrl+O → アプリにパススルー
-```
+文節伸縮シナリオ:
+
+| # | 操作 | 期待結果 |
+|---|---|---|
+| 11 | "わたしはがっこうへいきます" + Space → Ctrl+O | 最初の文節が1文字延びる |
+| 12 | Shift+Right | Ctrl+O と同じ動作 |
+| 13 | Ctrl+I | 文節が1文字縮み、縮んだ1文字が次の文節先頭へ移動 |
+| 14 | Shift+Left | Ctrl+I と同じ動作 |
+| 15 | 1文字の文節で Ctrl+I | 何も起きない（クラッシュしない） |
+| 16 | 最後の文節で Ctrl+O | 何も起きない（クラッシュしない） |
+| 17 | 候補パネル表示中に Ctrl+O / Shift+Right | パネルが閉じて文節拡大 |
+| 18 | Empty / Composing 状態で Ctrl+I / Ctrl+O | アプリにパススルー |

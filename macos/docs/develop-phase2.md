@@ -42,19 +42,10 @@ macOS InputMethodKit (IMK) 上で日本語ローマ字入力を動作させる�
 
 Phase 2 開始前に以下を確認すること。
 
-```bash
-# Phase 1 の成果物が存在すること
-ls -la target/release/libkarukan_macos.dylib
-ls karukan-macos/include/karukan_macos.h
-
-# 全シンボルがエクスポートされていること
-nm -D target/release/libkarukan_macos.dylib | grep -E "^[0-9a-f]+ T _karukan_"
-# 期待: 12 シンボルが T セクションに存在
-
-# macOS 固有の依存のみであること
-otool -L target/release/libkarukan_macos.dylib
-# 期待: /usr/lib/libSystem.B.dylib、/System/Library/Frameworks/Metal.framework 等のみ
-```
+- `target/release/libkarukan_macos.dylib` が存在すること
+- `karukan-macos/include/karukan_macos.h` が存在すること
+- `nm -D` で `_karukan_` プレフィックスのシンボルが T セクションに 12 個存在すること
+- `otool -L` で依存が macOS システムライブラリのみであること（`/usr/lib/libSystem.B.dylib`、`Metal.framework` 等）
 
 ---
 
@@ -130,34 +121,13 @@ karukan/
 
 #### Info.plist 追加キー
 
-```xml
-<!-- KarukanIM/Info.plist -->
-<key>LSUIElement</key>
-<true/>
-<!-- Dock に表示しない。入力メソッドはバックグラウンドで動作する。 -->
-
-<key>NSPrincipalClass</key>
-<string>NSApplication</string>
-```
+- `LSUIElement` = `true` — Dock に表示しない。入力メソッドはバックグラウンドで動作する。
+- `NSPrincipalClass` = `NSApplication`
 
 #### AppDelegate.swift
 
-```swift
-// KarukanIM/AppDelegate.swift
-import Cocoa
-
-@main
-class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        // ホストアプリ本体はUI不要。
-        // 将来 Phase 4 で設定ウィンドウを追加する。
-    }
-
-    func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool {
-        return false
-    }
-}
-```
+- `applicationDidFinishLaunching` では何もしない（ホストアプリ本体は UI 不要。将来 Phase 4 で設定ウィンドウを追加する）
+- `applicationShouldTerminateAfterLastWindowClosed` は `false` を返す
 
 #### Signing & Capabilities
 
@@ -189,59 +159,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 #### Info.plist（`KarukanIMExtension/Info.plist`）
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleIdentifier</key>
-    <string>com.example.karukan.KarukanIM.KarukanIMExtension</string>
+以下のキーを設定する。
 
-    <key>CFBundleName</key>
-    <string>Karukan</string>
-
-    <key>CFBundleDisplayName</key>
-    <string>Karukan</string>
-
-    <key>NSPrincipalClass</key>
-    <string>KarukanIMExtension.KarukanInputController</string>
-
-    <!-- IMK 接続名: Info.plist の InputMethodConnectionName と一致させる -->
-    <key>InputMethodConnectionName</key>
-    <string>KarukanIM</string>
-
-    <key>InputMethodServerControllerClass</key>
-    <string>KarukanIMExtension.KarukanInputController</string>
-
-    <!-- App Extension エントリポイント -->
-    <key>NSExtension</key>
-    <dict>
-        <key>NSExtensionPrincipalClass</key>
-        <string>KarukanIMExtension.KarukanInputController</string>
-        <key>NSExtensionPointIdentifier</key>
-        <string>com.apple.inputmethodkit</string>
-    </dict>
-
-    <!-- 入力モード定義 -->
-    <key>ComponentInputModeDict</key>
-    <dict>
-        <key>tsInputModeListKey</key>
-        <dict>
-            <key>com.example.inputmethod.karukan.hiragana</key>
-            <dict>
-                <key>TISInputSourceIsASCIICapable</key>
-                <false/>
-                <key>TISInputSourceType</key>
-                <string>com.apple.input-method.Roman</string>
-                <key>tsInputModeAlternateIcons</key>
-                <dict/>
-            </dict>
-        </dict>
-    </dict>
-</dict>
-</plist>
-```
+- `CFBundleIdentifier` = `com.example.karukan.KarukanIM.KarukanIMExtension`
+- `CFBundleName` = `Karukan`
+- `CFBundleDisplayName` = `Karukan`
+- `NSPrincipalClass` = `KarukanIMExtension.KarukanInputController`
+- `InputMethodConnectionName` = `KarukanIM`（IMK 接続名。Info.plist の値と一致させる）
+- `InputMethodServerControllerClass` = `KarukanIMExtension.KarukanInputController`
+- `NSExtension` — App Extension エントリポイント:
+  - `NSExtensionPrincipalClass` = `KarukanIMExtension.KarukanInputController`
+  - `NSExtensionPointIdentifier` = `com.apple.inputmethodkit`
+- `ComponentInputModeDict` > `tsInputModeListKey` > `com.example.inputmethod.karukan.hiragana`:
+  - `TISInputSourceIsASCIICapable` = `false`
+  - `TISInputSourceType` = `com.apple.input-method.Roman`
+  - `tsInputModeAlternateIcons` = （空辞書）
 
 > **Bundle Identifier の命名規則**: Extension の Bundle ID は、ホストアプリの Bundle ID を
 > プレフィックスにした形式（`.KarukanIMExtension` サフィックス）にする必要がある。
@@ -255,36 +187,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
 ### `KarukanIMExtension/KarukanBridge.h`
 
-```c
-// KarukanBridge.h
-// Swift Bridging Header — karukan-macos C FFI を Swift へ公開する
+`KarukanBridge.h` は `karukan_macos.h` をインクルードするだけのシンプルなヘッダー。
 
-#ifndef KarukanBridge_h
-#define KarukanBridge_h
-
-// プロジェクトルートからの相対パス
-#include "../../karukan-macos/include/karukan_macos.h"
-
-#endif /* KarukanBridge_h */
-```
+- プロジェクトルートからの相対パス `../../karukan-macos/include/karukan_macos.h` でインクルードする
+- または Build Settings の `HEADER_SEARCH_PATHS` に `$(SRCROOT)/../../karukan-macos/include` を追加し、ファイル名のみでインクルードする方法もある（絶対パス依存を避けられる）
 
 > **パスの確認**: `KarukanIM.xcodeproj` が `macos/` 直下にある場合、
 > `../../karukan-macos/include/karukan_macos.h` が正しいパスになる。
-> Xcode の Build Settings で `HEADER_SEARCH_PATHS` に
-> `$(SRCROOT)/../../karukan-macos/include` を追加することで絶対パス依存を避けられる。
-
-または `HEADER_SEARCH_PATHS` を設定して相対インクルードにする方法：
-
-```c
-// KarukanBridge.h（HEADER_SEARCH_PATHS 設定時）
-#include "karukan_macos.h"
-```
-
-**Build Settings**:
-
-```text
-HEADER_SEARCH_PATHS = $(SRCROOT)/../../karukan-macos/include
-```
 
 ---
 
@@ -296,62 +205,22 @@ HEADER_SEARCH_PATHS = $(SRCROOT)/../../karukan-macos/include
 
 **位置**: "Compile Sources" より**前**に配置する。
 
-```bash
-#!/usr/bin/env bash
-# Build Phase: Rust dylib のビルドとコピー
-#
-# このスクリプトは karukan-macos をビルドし、
-# libkarukan_macos.dylib を Extension の Frameworks ディレクトリに配置する。
+スクリプトが行う処理:
 
-set -euo pipefail
-
-REPO_ROOT="${SRCROOT}/../../"
-DYLIB_NAME="libkarukan_macos.dylib"
-
-# ビルド設定に応じて Rust プロファイルを選択
-if [ "${CONFIGURATION}" = "Release" ]; then
-    RUST_PROFILE="release"
-    CARGO_FLAGS="--release"
-else
-    RUST_PROFILE="debug"
-    CARGO_FLAGS=""
-fi
-
-RUST_TARGET_DIR="${REPO_ROOT}target/${RUST_PROFILE}"
-SRC="${RUST_TARGET_DIR}/${DYLIB_NAME}"
-DEST="${BUILT_PRODUCTS_DIR}/${FRAMEWORKS_FOLDER_PATH}/${DYLIB_NAME}"
-
-echo "▶ Building karukan-macos (profile: ${RUST_PROFILE})..."
-cd "${REPO_ROOT}"
-cargo build -p karukan-macos ${CARGO_FLAGS}
-
-echo "▶ Copying ${DYLIB_NAME} to Frameworks..."
-mkdir -p "${BUILT_PRODUCTS_DIR}/${FRAMEWORKS_FOLDER_PATH}"
-cp "${SRC}" "${DEST}"
-
-echo "▶ Fixing install name to @rpath/${DYLIB_NAME}..."
-install_name_tool -id "@rpath/${DYLIB_NAME}" "${DEST}"
-
-echo "▶ Verifying..."
-otool -D "${DEST}"
-# 期待出力: @rpath/libkarukan_macos.dylib
-
-echo "✓ Done: ${DEST}"
-```
+1. `CONFIGURATION` 変数を参照し、Release なら `--release` フラグ付きで `cargo build -p karukan-macos` を実行する（Debug なら省略）
+2. ビルド後の `libkarukan_macos.dylib` を `$(BUILT_PRODUCTS_DIR)/$(FRAMEWORKS_FOLDER_PATH)/` へコピーする
+3. `install_name_tool -id "@rpath/libkarukan_macos.dylib"` で install name を `@rpath` 相対に書き換える
+4. `otool -D` で install name が `@rpath/libkarukan_macos.dylib` になっていることを検証する
 
 **Input Files**（Xcode が変更検知に使用）:
 
-```text
-$(SRCROOT)/../../karukan-macos/src/session.rs
-$(SRCROOT)/../../karukan-macos/src/ffi/mod.rs
-$(SRCROOT)/../../Cargo.lock
-```
+- `$(SRCROOT)/../../karukan-macos/src/session.rs`
+- `$(SRCROOT)/../../karukan-macos/src/ffi/mod.rs`
+- `$(SRCROOT)/../../Cargo.lock`
 
 **Output Files**:
 
-```text
-$(BUILT_PRODUCTS_DIR)/$(FRAMEWORKS_FOLDER_PATH)/libkarukan_macos.dylib
-```
+- `$(BUILT_PRODUCTS_DIR)/$(FRAMEWORKS_FOLDER_PATH)/libkarukan_macos.dylib`
 
 > **パフォーマンス注記**: `cargo build` は Rust のインクリメンタルビルドキャッシュを使用するため、
 > ソースが変更されていない場合は高速（< 1秒）で完了する。
@@ -369,15 +238,7 @@ Build Phase スクリプト実行後、Xcode は `Embed Frameworks` フェーズ
 2. `${BUILD_DIR}/Debug/KarukanIMExtension.appex/Contents/Frameworks/libkarukan_macos.dylib`
    を参照（初回ビルド後に追加可能）
 
-または、Run Script から直接コードサインする（簡易版）:
-
-```bash
-# Run Script の末尾に追加（開発時のみ）
-if [ "${CODE_SIGNING_ALLOWED}" = "YES" ]; then
-    codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY}" \
-        --timestamp=none "${DEST}"
-fi
-```
+開発中は Run Script の末尾で `codesign --force --sign` を使って直接署名する方法も利用できる。
 
 ---
 
@@ -389,256 +250,52 @@ fi
 - Rust FFI の戻り値に基づいてクライアントの preedit/commit を更新する
 - 初期化完了前のキー入力はスルーする（`initialized` フラグで管理）
 
-### 完全実装
+### クラス構成
 
-```swift
-// KarukanIMExtension/KarukanInputController.swift
-import Cocoa
-import InputMethodKit
+`KarukanInputController` は `IMKInputController` を継承し、以下の責務を持つ。
 
-/// karukan IME の入力コントローラ。
-///
-/// IMKInputController の 1 インスタンスが 1 アプリケーションの入力コンテキストに対応する。
-/// Rust 側の KarukanSession と 1:1 で紐付く。
-final class KarukanInputController: IMKInputController {
+**プロパティ**:
 
-    // -----------------------------------------------------------------------
-    // MARK: - Properties
-    // -----------------------------------------------------------------------
+- `session: OpaquePointer?` — Rust セッション（opaque ポインタ）。`nil` は初期化失敗を意味する
+- `initialized: Bool` — `karukan_session_init` 完了フラグ
 
-    /// Rust セッション（opaque ポインタ）。nil = 初期化失敗
-    private var session: OpaquePointer?
+**ライフサイクル**:
 
-    /// karukan_session_init 完了フラグ。
-    /// バックグラウンドで init 後、メインスレッドで true に設定される。
-    private var initialized: Bool = false
+- `init(server:delegate:client:)` で `karukan_session_new()` を呼んでセッションを生成する（軽量・メインスレッド OK）
+- リソースロード（辞書・学習キャッシュ）は `DispatchQueue.global(qos: .userInitiated).async` でバックグラウンド実行し、完了後にメインスレッドで `initialized = true` にセットする（Phase 3 のモデルロードに備えた設計）
+- `deinit` で `karukan_session_free` を呼ぶ（学習キャッシュの保存も内部で実行される）
 
-    // -----------------------------------------------------------------------
-    // MARK: - Lifecycle
-    // -----------------------------------------------------------------------
+**キーイベント処理** (`handle(_:client:)`):
 
-    override init!(server: IMKServer!, delegate: Any!, client: Any!) {
-        super.init(server: server, delegate: delegate, client: client)
+- `initialized` が `false` の場合、またはセッションが `nil` の場合は `false` を返してスルーする
+- `KeyDown` のみ処理し、`Command` / `Option` / `Control` 修飾キー付きはスルーする
+- 特殊キー（Return / Backspace / Escape / Space / 矢印 / Tab）は macOS 仮想キーコードから `KarukanMacOSKey` に変換して `karukan_push_key` を呼ぶ
+- 印字可能文字（U+0020 以上）は `karukan_push_char` を呼ぶ
+- 両パスとも最後に `updateClientState(client:)` を呼んで IMK クライアントに状態を反映する
 
-        // セッション生成（軽量・メインスレッド OK）
-        guard let ptr = karukan_session_new() else {
-            // karukan_session_new は失敗時 NULL を返す
-            return
-        }
-        session = ptr
+**サーバーイベント**:
 
-        // リソースロード（Phase 1: 辞書・学習キャッシュ。Phase 3: モデル追加）
-        // バックグラウンドスレッドで呼ぶ（Phase 3 のモデルロードに備えた設計）。
-        let capturedSession = ptr
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            _ = karukan_session_init(capturedSession)
-            DispatchQueue.main.async {
-                self?.initialized = true
-            }
-        }
-    }
+- `deactivateServer`: 未確定文字があれば `forceCommit`、その後 `karukan_save_learning` で学習キャッシュを永続化する
+- `commitComposition`: IMK が強制コミットを要求した場合に `forceCommit` を呼ぶ
 
-    deinit {
-        guard let session else { return }
-        // 学習キャッシュを保存してから解放
-        karukan_session_free(session)
-    }
+**プライベートヘルパー**:
 
-    // -----------------------------------------------------------------------
-    // MARK: - Key Event Handling
-    // -----------------------------------------------------------------------
+- `updateClientState(client:)` — `karukan_has_commit` でコミット文字列を確認して `insertText` し、`karukan_get_preedit` で preedit テキストを取得して `setMarkedText` に渡す。カーソル位置は `karukan_get_preedit_caret` が返す UTF-8 バイトオフセットを文字数インデックスに変換する
+- `forceCommit(client:)` — `karukan_push_key(KARUKAN_KEY_RETURN)` で未確定テキストをコミットし、preedit をクリアする
 
-    override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
-        // 初期化完了前はすべてスルー（アプリに伝える）
-        guard initialized, let session else { return false }
+**macOS キーコードマッピング** (`KarukanMacOSKey`):
 
-        // KeyDown のみ処理（KeyUp, FlagsChanged 等は無視）
-        guard event.type == .keyDown else { return false }
+macOS の仮想キーコード（Carbon key code）と `KarukanKey` の対応は付録を参照。
+`from(keyCode:)` が変換を担当し、対応するキーがない場合は `nil` を返す。
 
-        let flags = event.modifierFlags
-            .intersection(.deviceIndependentFlagsMask)
+### `updateClientState` の preedit カーソル位置変換について
 
-        // Command / Option / Control 付きキーはスルー
-        // （システムショートカットや他アプリの機能を妨げない）
-        if flags.contains(.command) || flags.contains(.option) || flags.contains(.control) {
-            return false
-        }
+`karukan_get_preedit_caret` が返すのは**バイトオフセット**（UTF-8）。
+Swift の `setMarkedText` が要求するのは**文字数（Unicode スカラー数）**。
+変換が必要なため、UTF-8 バイト列の `prefix` から文字数を計算している。
 
-        // 特殊キー → karukan_push_key
-        if let key = KarukanMacOSKey.from(keyCode: event.keyCode) {
-            let consumed = karukan_push_key(session, key.rawValue) != 0
-            updateClientState(client: sender)
-            return consumed
-        }
-
-        // 印字可能文字 → karukan_push_char
-        guard let chars = event.characters,
-              let scalar = chars.unicodeScalars.first,
-              scalar.value >= 0x20 else {
-            return false
-        }
-
-        let consumed = chars.withCString { ptr in
-            karukan_push_char(session, ptr) != 0
-        }
-        updateClientState(client: sender)
-        return consumed
-    }
-
-    // -----------------------------------------------------------------------
-    // MARK: - Server Events
-    // -----------------------------------------------------------------------
-
-    override func activateServer(_ sender: Any!) {
-        super.activateServer(sender)
-        // 必要に応じて preedit を再描画
-    }
-
-    override func deactivateServer(_ sender: Any!) {
-        guard let session else {
-            super.deactivateServer(sender)
-            return
-        }
-        // フォーカス喪失時: 未確定文字があればコミット
-        if karukan_is_empty(session) == 0 {
-            forceCommit(client: sender)
-        }
-        // 学習キャッシュを永続化
-        karukan_save_learning(session)
-        super.deactivateServer(sender)
-    }
-
-    override func commitComposition(_ sender: Any!) {
-        // IMK が強制コミットを要求した場合
-        forceCommit(client: sender)
-        super.commitComposition(sender)
-    }
-
-    // -----------------------------------------------------------------------
-    // MARK: - Private Helpers
-    // -----------------------------------------------------------------------
-
-    /// Rust 側の状態（preedit / commit）を IMK クライアントに反映する。
-    ///
-    /// karukan_push_* 呼び出し後に必ず呼ぶこと。
-    private func updateClientState(client: Any?) {
-        guard let session, let client = client as AnyObject? else { return }
-
-        // コミットテキストがあれば先に挿入
-        if karukan_has_commit(session) != 0 {
-            let ptr = karukan_get_commit(session)
-            let text = ptr.map { String(cString: $0) } ?? ""
-            if !text.isEmpty {
-                client.insertText?(text, replacementRange: NSRange(location: NSNotFound, length: 0))
-            }
-        }
-
-        // preedit テキストを更新
-        let preeditPtr = karukan_get_preedit(session)
-        let preeditText = preeditPtr.map { String(cString: $0) } ?? ""
-        let caretBytes = Int(karukan_get_preedit_caret(session))
-
-        if preeditText.isEmpty {
-            // preedit をクリア
-            client.setMarkedText?(
-                "",
-                selectionRange: NSRange(location: 0, length: 0),
-                replacementRange: NSRange(location: NSNotFound, length: 0)
-            )
-        } else {
-            // カーソル位置を文字インデックスに変換（バイトオフセット → Swift String.Index）
-            let cursorCharPos = preeditText.utf8
-                .prefix(caretBytes).count  // 近似値（ASCII の場合は一致）
-            let cursorIndex = preeditText.index(
-                preeditText.startIndex,
-                offsetBy: min(
-                    preeditText.utf8.prefix(caretBytes).string.count,
-                    preeditText.count
-                )
-            )
-            let cursorCharIndex = preeditText.distance(
-                from: preeditText.startIndex, to: cursorIndex)
-
-            let attrStr = NSMutableAttributedString(string: preeditText)
-            let fullRange = NSRange(preeditText.startIndex..., in: preeditText)
-            attrStr.addAttribute(.underlineStyle,
-                                 value: NSUnderlineStyle.single.rawValue,
-                                 range: fullRange)
-
-            client.setMarkedText?(
-                attrStr,
-                selectionRange: NSRange(location: cursorCharIndex, length: 0),
-                replacementRange: NSRange(location: NSNotFound, length: 0)
-            )
-        }
-    }
-
-    /// 未確定テキストを強制コミットする。
-    private func forceCommit(client: Any?) {
-        guard let session else { return }
-        guard let client = client as AnyObject? else { return }
-
-        // preedit に残っているテキストを Return キーでコミット
-        if karukan_is_empty(session) == 0 {
-            _ = karukan_push_key(session, KarukanMacOSKey.returnKey.rawValue)
-
-            if karukan_has_commit(session) != 0 {
-                let ptr = karukan_get_commit(session)
-                let text = ptr.map { String(cString: $0) } ?? ""
-                if !text.isEmpty {
-                    client.insertText?(
-                        text,
-                        replacementRange: NSRange(location: NSNotFound, length: 0)
-                    )
-                }
-            }
-            // preedit をクリア
-            client.setMarkedText?(
-                "",
-                selectionRange: NSRange(location: 0, length: 0),
-                replacementRange: NSRange(location: NSNotFound, length: 0)
-            )
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// MARK: - macOS キーコード → KarukanKey マッピング
-// ---------------------------------------------------------------------------
-
-/// macOS の仮想キーコード（Carbon key code）と `KarukanKey` の対応。
-///
-/// 参照: Carbon/HIToolbox/Events.h, kVK_* 定数
-private enum KarukanMacOSKey: UInt32 {
-    case returnKey  = 1   // KARUKAN_KEY_RETURN
-    case backspace  = 2   // KARUKAN_KEY_BACKSPACE
-    case escape     = 3   // KARUKAN_KEY_ESCAPE
-    case space      = 4   // KARUKAN_KEY_SPACE
-    case leftArrow  = 5   // KARUKAN_KEY_LEFT
-    case rightArrow = 6   // KARUKAN_KEY_RIGHT
-    case upArrow    = 7   // KARUKAN_KEY_UP
-    case downArrow  = 8   // KARUKAN_KEY_DOWN
-    case tab        = 9   // KARUKAN_KEY_TAB
-
-    /// macOS 仮想キーコード（UInt16）から KarukanMacOSKey に変換する。
-    /// 対応するキーがない場合は nil を返す。
-    static func from(keyCode: UInt16) -> KarukanMacOSKey? {
-        switch keyCode {
-        case 36: return .returnKey   // kVK_Return
-        case 76: return .returnKey   // kVK_ANSI_KeypadEnter
-        case 51: return .backspace   // kVK_Delete (Backspace)
-        case 53: return .escape      // kVK_Escape
-        case 49: return .space       // kVK_Space
-        case 123: return .leftArrow  // kVK_LeftArrow
-        case 124: return .rightArrow // kVK_RightArrow
-        case 125: return .downArrow  // kVK_DownArrow
-        case 126: return .upArrow    // kVK_UpArrow
-        case 48: return .tab         // kVK_Tab
-        default: return nil
-        }
-    }
-}
-```
+ASCII ローマ字入力（Phase 2 のスコープ）では 1バイト = 1文字のため誤差なし。
+ひらがな（3バイト/文字）が混在する場合も正しく変換される。
 
 > **`any AnyObject` の `setMarkedText?` / `insertText?` 呼び出しについて**:
 > IMK の `sender` は `IMKTextInput` プロトコルに準拠するが、Swift 6 で直接キャストすると
@@ -647,53 +304,22 @@ private enum KarukanMacOSKey: UInt32 {
 > `@objc optional` メソッドとして定義されているため、AnyObject 経由の呼び出しで
 > セレクタが存在しない場合は安全に no-op になる。
 
-### `updateClientState` の preedit カーソル位置変換について
-
-`karukan_get_preedit_caret` が返すのは**バイトオフセット**（UTF-8）。
-Swift の `setMarkedText` が要求するのは**文字数（Unicode スカラー数）**。
-変換が必要なため、上記実装では UTF-8 バイト列の `prefix` から文字数を計算している。
-
-ASCII ローマ字入力（Phase 2 のスコープ）では 1バイト = 1文字のため誤差なし。
-ひらがな（3バイト/文字）が混在する場合も正しく変換される。
-
 ---
 
 ## 6. ビルドと実行
 
 ### 6-1. 初回ビルド手順
 
-```bash
-# 1. Rust dylib のビルド（Xcode Build Phase でも実行されるが、事前確認用）
-cd /path/to/karukan
-cargo build -p karukan-macos
-
-# 2. Xcode でビルド
-# Target: KarukanIMExtension を選択
-# Destination: My Mac
-# Cmd+B
-```
+1. Rust dylib を事前確認目的でビルドする: `cargo build -p karukan-macos`（Xcode Build Phase でも自動実行される）
+2. Xcode で `KarukanIMExtension` ターゲットを選択し、Destination を "My Mac" にして `Cmd+B` を実行する
 
 ### 6-2. 生成される App Bundle 構造の確認
 
-ビルド後、以下を確認する:
+ビルド後に以下を確認する:
 
-```bash
-# KarukanIM.app の構造確認
-DERIVED_DATA=~/Library/Developer/Xcode/DerivedData
-APP_PATH=$(find "${DERIVED_DATA}" -name "KarukanIM.app" -maxdepth 6 | head -1)
-
-echo "=== App Bundle 構造 ==="
-find "${APP_PATH}" -type f | sort
-
-echo "=== dylib install name ==="
-otool -D "${APP_PATH}/Contents/PlugIns/KarukanIMExtension.appex/Contents/Frameworks/libkarukan_macos.dylib"
-# 期待: @rpath/libkarukan_macos.dylib
-
-echo "=== Extension の rpath 設定 ==="
-otool -l "${APP_PATH}/Contents/PlugIns/KarukanIMExtension.appex/Contents/MacOS/KarukanIMExtension" \
-  | grep -A 2 "LC_RPATH"
-# 期待: path @loader_path/../Frameworks
-```
+- `KarukanIM.app/Contents/PlugIns/KarukanIMExtension.appex/Contents/Frameworks/libkarukan_macos.dylib` が存在すること
+- `otool -D libkarukan_macos.dylib` の出力が `@rpath/libkarukan_macos.dylib` であること
+- `otool -l KarukanIMExtension` に `LC_RPATH: path @loader_path/../Frameworks` が含まれること
 
 ---
 
@@ -701,78 +327,29 @@ otool -l "${APP_PATH}/Contents/PlugIns/KarukanIMExtension.appex/Contents/MacOS/K
 
 ### 7-1. 初回インストール
 
-macOS の Input Method を有効化するには、アプリを `/Library/Input Methods/` または
-`~/Library/Input Methods/` に配置する必要がある。
+macOS の Input Method を有効化するには、アプリを `~/Library/Input Methods/` に配置する必要がある。
 
-```bash
-# ユーザーローカルへのインストール（sudo 不要）
-DERIVED_DATA=~/Library/Developer/Xcode/DerivedData
-APP_PATH=$(find "${DERIVED_DATA}" -name "KarukanIM.app" -maxdepth 6 | head -1)
-
-cp -R "${APP_PATH}" ~/Library/Input\ Methods/KarukanIM.app
-```
+手順:
+1. DerivedData から `KarukanIM.app` を検索する
+2. `~/Library/Input Methods/KarukanIM.app` としてコピーする
 
 ### 7-2. IME 登録コマンド
 
-```bash
-# TIS（Text Input Sources）にIMEを登録
-/System/Library/Frameworks/Carbon.framework/Versions/A/Support/AddressBook.app/../../../Versions/A/Resources/AddressBook.app/../../../Versions/A/Resources/RegisterInputSources.app/Contents/MacOS/RegisterInputSources \
-    ~/Library/Input\ Methods/KarukanIM.app
+TIS（Text Input Sources）への登録は以下の方法のいずれかで行う:
 
-# または macOS 13+ では:
-defaults write ~/Library/Preferences/com.apple.HIToolbox.plist \
-    AppleEnabledInputSources \
-    -array-add '<dict><key>Bundle ID</key><string>com.example.karukan.KarukanIM.KarukanIMExtension</string><key>InputSourceKind</key><string>Non Roman Input Method</string></dict>'
-```
+- `RegisterInputSources` ツール（`Carbon.framework` に付属）を使って登録する
+- macOS 13+ では `defaults write` で `AppleEnabledInputSources` に Bundle ID を追加する
 
-> **推奨**: ターミナルからの手動登録は繁雑。開発中は以下のシェルスクリプトを `macos/scripts/install-dev.sh` として作成して使う。
+> **推奨**: ターミナルからの手動登録は繁雑。開発中は `macos/scripts/install-dev.sh` を用意して使う。
 
-### `macos/scripts/install-dev.sh`
+### `macos/scripts/install-dev.sh` の処理内容
 
-```bash
-#!/usr/bin/env bash
-# 開発用 IME インストールスクリプト
-# Usage: ./install-dev.sh [Debug|Release]
+開発用インストールスクリプトが行う処理:
 
-set -euo pipefail
-
-CONFIG="${1:-Debug}"
-DERIVED_DATA="${HOME}/Library/Developer/Xcode/DerivedData"
-INSTALL_DIR="${HOME}/Library/Input Methods"
-
-# ビルド成果物を検索
-APP_PATH=$(find "${DERIVED_DATA}" \
-    -name "KarukanIM.app" \
-    -path "*/Build/Products/${CONFIG}/*" \
-    -maxdepth 8 | head -1)
-
-if [ -z "${APP_PATH}" ]; then
-    echo "Error: KarukanIM.app not found. Build first with Xcode (${CONFIG})."
-    exit 1
-fi
-
-echo "Found: ${APP_PATH}"
-
-# 旧バージョンを削除
-if [ -d "${INSTALL_DIR}/KarukanIM.app" ]; then
-    echo "Removing old installation..."
-    rm -rf "${INSTALL_DIR}/KarukanIM.app"
-fi
-
-# インストール
-echo "Installing to ${INSTALL_DIR}..."
-cp -R "${APP_PATH}" "${INSTALL_DIR}/KarukanIM.app"
-
-# IME を再登録
-echo "Registering input method..."
-# killall InputMethodKit またはログアウト/ログインで反映
-killall -9 InputMethodKit 2>/dev/null || true
-
-echo "✓ Installed. Please:"
-echo "  1. Open System Settings > Keyboard > Input Sources"
-echo "  2. Add 'Karukan' from the list"
-echo "  Note: May require logout/login on first install."
-```
+1. `Debug` または `Release`（引数で指定）のビルド成果物を DerivedData から検索する
+2. `~/Library/Input Methods/KarukanIM.app` が既に存在すれば削除する
+3. 新しい `KarukanIM.app` をコピーする
+4. `killall -9 InputMethodKit` で InputMethodKit を再起動する（初回は反映されない場合あり）
 
 ### 7-3. システム設定での有効化
 
@@ -794,53 +371,22 @@ echo "  Note: May require logout/login on first install."
 Extension はバックグラウンドプロセスとして動作するため、Xcode デバッガが直接アタッチしにくい。
 `os_log` または `tracing` を使ってログを出力し、Console.app で確認する。
 
-#### tracing ログの確認（Rust 側）
+**Rust 側のログ確認**:
 
-```bash
-# Console.app を起動
-open /System/Applications/Utilities/Console.app
+- Console.app を起動し、Process フィルタを `KarukanIMExtension`、または subsystem フィルタを `karukan` に設定する
+- Rust 側の `tracing` は `stderr` に出力する（`ffi/mod.rs` の `init_logging`）。Extension の stderr は Console.app の "Messages" に表示される
+- ログレベルを変更するには `init_logging` 内でハードコードする（`launchctl setenv` は Extension プロセスに伝わらない場合がある）
 
-# フィルタ: Process = "KarukanIMExtension"
-# または subsystem = "karukan"
-```
+**Swift 側のログ**:
 
-Rust 側の `tracing` は `stderr` に出力する設定になっている（`ffi/mod.rs` の `init_logging`）。
-Extension のプロセスの stderr は Console.app の "Messages" に表示される。
-
-ログレベルを上げる場合:
-
-```bash
-# launchctl setenv は Extension プロセスには伝わらない場合がある
-# Install.sh の前に設定する必要がある
-# 代替: 一時的に init_logging で "debug" にハードコード
-```
-
-#### Swift 側ログの追加
-
-`KarukanInputController.swift` に以下を追加すると便利:
-
-```swift
-import OSLog
-
-private let logger = Logger(subsystem: "com.example.karukan", category: "InputController")
-
-// 使用例:
-logger.debug("push_char: \(chars.debugDescription), consumed: \(consumed)")
-logger.info("initialized: \(self.initialized)")
-```
+- `import OSLog` して `Logger(subsystem:category:)` を使用する
+- subsystem は `com.example.karukan`、category は `InputController` 等を指定する
 
 ### 8-2. プロセスへのアタッチ
 
-```bash
-# Extension プロセスの PID を確認
-pgrep -l KarukanIMExtension
-
-# lldb でアタッチ（Xcode の "Debug > Attach to Process by PID or Name..." でも可）
-sudo lldb -p $(pgrep KarukanIMExtension)
-```
-
-Xcode の **Debug > Attach to Process > KarukanIMExtension** を使う方法が最も簡単。
-アタッチ後、Swift ブレークポイントが機能する。
+- `pgrep -l KarukanIMExtension` で Extension プロセスの PID を確認する
+- Xcode の **Debug > Attach to Process > KarukanIMExtension** を使うのが最も簡単
+- アタッチ後、Swift ブレークポイントが機能する
 
 ### 8-3. よくある問題と対処
 
@@ -861,39 +407,17 @@ IME インストール・有効化後、以下の順番で動作確認する。
 
 ### 基本動作チェックリスト
 
-```text
-[x] 1. TextEdit を開き、Karukan 入力ソースに切り替える
-
-[x] 2. "a" を押す
-      期待: preedit に "あ"（下線付き）が表示される
-
-[x] 3. "i" を押す
-      期待: preedit が "あい" になる
-
-[x] 4. Return を押す
-      期待: "あい" がコミットされ、preedit が消える
-
-[x] 5. "k" を押す
-      期待: preedit に "k" が表示される（未確定ローマ字）
-
-[x] 6. "a" を押す
-      期待: preedit が "か" になる
-
-[x] 7. "nnnichiha" と順に押す
-      期待: preedit が "んにちは" になる（"konnnichiha" で "こんにちは"）
-
-[x] 8. Backspace を押す
-      期待: preedit の最後の文字が削除される
-
-[x] 9. Backspace を連打して preedit を空にする
-      期待: preedit が消える（下線も消える）
-
-[x] 10. Escape を押す（preedit に何か入力した後）
-       期待: preedit がキャンセルされてコミットなし
-
-[ ] 11. フォーカスを他のアプリに移す（Command+Tab 等）
-        期待: 未確定テキストがコミットされる（deactivateServer 動作確認）
-```
+- [x] 1. TextEdit を開き、Karukan 入力ソースに切り替える
+- [x] 2. "a" を押す → preedit に "あ"（下線付き）が表示される
+- [x] 3. "i" を押す → preedit が "あい" になる
+- [x] 4. Return を押す → "あい" がコミットされ、preedit が消える
+- [x] 5. "k" を押す → preedit に "k" が表示される（未確定ローマ字）
+- [x] 6. "a" を押す → preedit が "か" になる
+- [x] 7. "nnnichiha" と順に押す → preedit が "んにちは" になる（"konnnichiha" で "こんにちは"）
+- [x] 8. Backspace を押す → preedit の最後の文字が削除される
+- [x] 9. Backspace を連打して preedit を空にする → preedit が消える（下線も消える）
+- [x] 10. Escape を押す（preedit に何か入力した後）→ preedit がキャンセルされてコミットなし
+- [ ] 11. フォーカスを他のアプリに移す（Command+Tab 等）→ 未確定テキストがコミットされる（deactivateServer 動作確認）
 
 ---
 

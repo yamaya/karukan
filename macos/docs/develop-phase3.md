@@ -11,11 +11,8 @@
 `karukan-engine` の `KanaKanjiConverter`（llama.cpp ベース）を統合し、
 ひらがな → 漢字変換を macOS 上で動作させる。
 
-```text
-konnnichiha [Space] → 「こんにちは / 今日は / 今日和 ...」候補ウィンドウ表示
-                      ↓ 選択 [Return]
-                      「今日は」コミット
-```
+スペースキーで変換を起動し、候補ウィンドウから選択して確定するまでの一連のフローを実現する。
+例: `konnnichiha` [Space] → 候補ウィンドウに「こんにちは / 今日は / 今日和 ...」を表示 → [Return] で「今日は」をコミット。
 
 ---
 
@@ -36,55 +33,37 @@ konnnichiha [Space] → 「こんにちは / 今日は / 今日和 ...」候補�
 
 ### 変換フロー
 
-```text
-[Space 押下]
-    │
-    ▼
-karukan_push_key(SPACE)
-    │
-    ├─ Composing 状態 かつ input_buf が空でない
-    │       │
-    │       ▼
-    │   KanaKanjiConverter::convert(hiragana, context, n=9)
-    │       │
-    │       ├─ Dict / Learning で候補を補完・リランク
-    │       │
-    │       ▼
-    │   SessionState::Conversion に遷移
-    │   candidates = [...] 確定
-    │       │
-    │       ▼
-    │   karukan_get_candidate_count() > 0
-    │
-    │
-[Swift 側]
-    │
-    ▼
-IMKCandidates.update(sender)
-IMKCandidates.show(kIMKLocateCandidatesAboveHint)
-    │
-    ▼
-候補選択 → candidateSelected(_:)
-    │
-    ▼
-karukan_select_candidate(session, index)
-    │
-    ▼
-karukan_has_commit() → insertText()
+```mermaid
+flowchart TD
+    A["Space 押下"] --> B["karukan_push_key(SPACE)"]
+    B --> C1{Composing 状態?}
+    C1 -->|No| X["スルー（return false）"]
+    C1 -->|Yes| C2{input_buf が空でない?}
+    C2 -->|No| Y["全角スペース（U+3000）をコミット → Empty へ遷移"]
+    C2 -->|Yes| D["KanaKanjiConverter::convert(hiragana, context, n=9)"]
+    D --> E["Dict / Learning で候補を補完・リランク"]
+    E --> F["SessionState::Conversion に遷移<br>candidates = [...] 確定"]
+    F --> G["karukan_get_candidate_count() > 0"]
+    G --> H["IMKCandidates.update(sender)<br>IMKCandidates.show(kIMKLocateCandidatesAboveHint)"]
+    H --> I["候補選択 → candidateSelected(_:)"]
+    I --> J["karukan_select_candidate(session, index)"]
+    J --> K["karukan_has_commit() → insertText()"]
 ```
 
 ### 状態遷移（Phase 3 追加分）
 
-```text
-Empty ──push_char──► Composing
-Composing ──Return──► Empty        (ひらがなコミット: Phase 2 動作)
-Composing ──Escape──► Empty        (キャンセル: Phase 2 動作)
-Composing ──Space──► Conversion    ★Phase 3 追加
-Conversion ──Return──► Empty       (選択候補コミット)
-Conversion ──Escape──► Composing   (変換キャンセル、ひらがなに戻る)
-Conversion ──Space / Tab / Down──► Conversion (次候補)
-Conversion ──Up / Shift-Tab──► Conversion    (前候補)
-Conversion ──数字キー──► Empty     (番号指定コミット: 任意実装)
+```mermaid
+stateDiagram-v2
+    [*] --> Empty
+    Empty --> Composing : push_char
+    Composing --> Empty : Return（ひらがなコミット）
+    Composing --> Empty : Escape（キャンセル）
+    Composing --> Conversion : Space ★Phase 3 追加
+    Conversion --> Empty : Return（選択候補コミット）
+    Conversion --> Composing : Escape（変換キャンセル・ひらがなに戻る）
+    Conversion --> Conversion : Space / Tab / Down（次候補）
+    Conversion --> Conversion : Up / Shift-Tab（前候補）
+    Conversion --> Empty : 数字キー（番号指定コミット・任意実装）
 ```
 
 ---
@@ -95,290 +74,97 @@ Conversion ──数字キー──► Empty     (番号指定コミット: 任�
 
 #### `SessionState` に `Conversion` を追加
 
-```rust
-enum SessionState {
-    Empty,
-    Composing,
-    Conversion(ConversionState),
-}
+`SessionState` 列挙型に `Conversion(ConversionState)` バリアントを追加する。
+`ConversionState` は以下のフィールドを持つ:
 
-struct ConversionState {
-    /// 変換対象のひらがな（戻る際に使う）
-    hiragana: String,
-    /// 変換候補リスト（Learning → Dict → Model 順でリランク済み）
-    candidates: Vec<String>,
-    /// 現在選択中の候補インデックス
-    cursor: usize,
-}
-```
+- `hiragana: String` — 変換対象のひらがな（Escape でひらがな編集に戻る際に使用）
+- `candidates: Vec<String>` — 変換候補リスト（Learning → Dict → Model 順でリランク済み）
+- `cursor: usize` — 現在選択中の候補インデックス
 
 #### `KarukanSession` に `converter` フィールドを追加
 
-```rust
-pub struct KarukanSession {
-    // ... 既存フィールド ...
-    converter: Option<KanaKanjiConverter>,
-    /// 候補キャッシュ（FFI から参照される CString リスト）
-    pub(crate) candidate_cache: CandidateCache,
-}
+`KarukanSession` 構造体に以下を追加する:
 
-pub(crate) struct CandidateCache {
-    pub items: Vec<CString>,  // 各候補の CString
-    pub cursor: u32,
-}
-```
+- `converter: Option<KanaKanjiConverter>` — ロード済みの変換器（失敗時は `None`）
+- `candidate_cache: CandidateCache` — FFI から参照される候補の `CString` リストと選択カーソル
 
 #### `init_resources` にモデルロードを追加
 
-```rust
-pub fn init_resources(&mut self) {
-    // ... 既存の dict / learning ロード ...
-
-    // モデルロード（HuggingFace から自動 DL、初回のみ）
-    match Backend::from_variant_id("default") {
-        Ok(backend) => match KanaKanjiConverter::new(backend) {
-            Ok(conv) => {
-                tracing::info!("KanaKanjiConverter loaded");
-                self.converter = Some(conv);
-            }
-            Err(e) => tracing::warn!("Failed to init converter: {}", e),
-        },
-        Err(e) => tracing::warn!("Failed to load backend: {}", e),
-    }
-}
-```
+既存の辞書・学習キャッシュのロード処理に続けて、`Backend::from_variant_id("default")` で
+モデルバックエンドを初期化し、`KanaKanjiConverter::new(backend)` で変換器を生成して
+`self.converter` にセットする。初回起動時は HuggingFace から GGUF を自動ダウンロードする。
+失敗した場合は `None` のまま警告ログを出す（次セッションでリトライ可能）。
 
 > **注意**: `init_resources` は Swift 側でバックグラウンドスレッドから呼ばれるため、
 > モデルのダウンロード（初回のみ）を含む重い処理でも問題ない。
 
 #### `push_key(Space)` を変換トリガーに変更
 
-```rust
-(SessionState::Composing, KarukanKey::Space) => {
-    // Phase 1 の全角スペース挿入を削除し、変換を起動
-    self.do_conversion();
-    true
-}
+Composing 状態での Space キーハンドラを以下の挙動に変更する:
 
-fn do_conversion(&mut self) {
-    // ローマ字バッファをフラッシュしてひらがなを確定
-    let prev_len = self.romaji.output().chars().count();
-    let _ = self.romaji.flush();
-    let flushed: String = self.romaji.output().chars().skip(prev_len).collect();
-    if !flushed.is_empty() {
-        self.input_buf.insert(&flushed);
-    }
+- Phase 1 の全角スペース挿入を削除し、`do_conversion()` を呼ぶ
+- `do_conversion` の処理手順:
+  1. ローマ字バッファをフラッシュしてひらがなを確定
+  2. `input_buf.text` が空なら全角スペース（U+3000）をコミットして Empty に遷移（Phase 1 互換）
+  3. 空でなければ `collect_candidates(&hiragana)` で候補を収集
+  4. 候補を `candidate_cache` に格納し、`SessionState::Conversion` に遷移
+  5. preedit に先頭候補を下線付きで表示
 
-    let hiragana = self.input_buf.text.clone();
-    if hiragana.is_empty() {
-        // 空なら全角スペースをコミット（Phase 1 互換）
-        self.commit.text = CString::new("\u{3000}").unwrap_or_default();
-        self.commit.dirty = true;
-        self.state = SessionState::Empty;
-        self.update_preedit("");
-        return;
-    }
+`collect_candidates` の優先順位:
 
-    // 変換候補を取得
-    let mut candidates = self.collect_candidates(&hiragana);
-    if candidates.is_empty() {
-        candidates.push(hiragana.clone());
-    }
+1. 学習キャッシュ（最優先）— `learning.get_top(hiragana)` で上位 1 件
+2. モデル変換 — `converter.convert(hiragana, "", 9)` で最大 9 候補
+3. システム辞書（フォールバック）— `dict.lookup(hiragana)` 上位 5 件
+4. 候補なしの場合はひらがなをそのまま返す
 
-    // 候補キャッシュを更新
-    self.candidate_cache.items = candidates
-        .iter()
-        .map(|s| CString::new(s.as_str()).unwrap_or_default())
-        .collect();
-    self.candidate_cache.cursor = 0;
-
-    self.state = SessionState::Conversion(ConversionState {
-        hiragana,
-        candidates,
-        cursor: 0,
-    });
-
-    // preedit に先頭候補を表示（下線付き）
-    self.update_preedit_for_conversion();
-}
-
-/// 候補収集: Learning → Dict → Model の優先順でマージ
-fn collect_candidates(&self, hiragana: &str) -> Vec<String> {
-    let mut result: Vec<String> = Vec::new();
-
-    // 1. 学習キャッシュ（最優先）
-    if let Some(cache) = &self.learning {
-        if let Some(learned) = cache.get_top(hiragana) {
-            result.push(learned.to_string());
-        }
-    }
-
-    // 2. モデル変換（最大 9 候補）
-    if let Some(conv) = &self.converter {
-        match conv.convert(hiragana, "", 9) {
-            Ok(model_cands) => {
-                for c in model_cands {
-                    if !result.contains(&c) {
-                        result.push(c);
-                    }
-                }
-            }
-            Err(e) => tracing::warn!("Conversion failed: {}", e),
-        }
-    }
-
-    // 3. システム辞書（フォールバック）
-    if let Some(dict) = &self.dict {
-        for entry in dict.lookup(hiragana).into_iter().take(5) {
-            if !result.contains(&entry.surface) {
-                result.push(entry.surface.clone());
-            }
-        }
-    }
-
-    // 候補がなければ読みをそのまま返す
-    if result.is_empty() {
-        result.push(hiragana.to_string());
-    }
-    result
-}
-```
+重複候補は除去し、優先順位の高いものが先頭に来るよう整列する。
 
 #### Conversion 状態のキーハンドラ
 
-```rust
-(SessionState::Conversion(ref mut conv), KarukanKey::Return) => {
-    let selected = conv.candidates[conv.cursor].clone();
-    // 学習キャッシュに記録
-    if let Some(cache) = &mut self.learning {
-        cache.record(&conv.hiragana, &selected);
-    }
-    self.commit.text = CString::new(selected).unwrap_or_default();
-    self.commit.dirty = true;
-    self.state = SessionState::Empty;
-    self.update_preedit("");
-    true
-}
-(SessionState::Conversion(ref mut conv), KarukanKey::Escape) => {
-    // ひらがな編集状態に戻す
-    let hiragana = conv.hiragana.clone();
-    self.state = SessionState::Composing;
-    self.update_preedit(&hiragana);
-    true
-}
-(SessionState::Conversion(ref mut conv), KarukanKey::Space)
-| (SessionState::Conversion(ref mut conv), KarukanKey::Tab)
-| (SessionState::Conversion(ref mut conv), KarukanKey::Down) => {
-    conv.cursor = (conv.cursor + 1) % conv.candidates.len();
-    self.candidate_cache.cursor = conv.cursor as u32;
-    self.update_preedit_for_conversion();
-    true
-}
-(SessionState::Conversion(ref mut conv), KarukanKey::Up) => {
-    conv.cursor = if conv.cursor == 0 {
-        conv.candidates.len() - 1
-    } else {
-        conv.cursor - 1
-    };
-    self.candidate_cache.cursor = conv.cursor as u32;
-    self.update_preedit_for_conversion();
-    true
-}
-```
+| キー | 動作 |
+|---|---|
+| Return | 選択候補を学習キャッシュに記録してコミット、Empty へ遷移 |
+| Escape | ひらがな編集状態（Composing）に戻す |
+| Space / Tab / Down | 次候補に移動（循環）、`candidate_cache.cursor` を更新 |
+| Up / Shift-Tab | 前候補に移動（循環）、`candidate_cache.cursor` を更新 |
 
 #### `karukan_select_candidate` のセッション側実装
 
-```rust
-/// 候補インデックスを指定して即確定する（IMKCandidates のクリック用）
-pub fn select_candidate(&mut self, index: usize) -> bool {
-    let SessionState::Conversion(ref conv) = self.state else {
-        return false;
-    };
-    if index >= conv.candidates.len() {
-        return false;
-    }
-    let selected = conv.candidates[index].clone();
-    let hiragana = conv.hiragana.clone();
-    if let Some(cache) = &mut self.learning {
-        cache.record(&hiragana, &selected);
-    }
-    self.clear_flags();
-    self.commit.text = CString::new(selected).unwrap_or_default();
-    self.commit.dirty = true;
-    self.state = SessionState::Empty;
-    self.update_preedit("");
-    true
-}
-```
+`select_candidate(index: usize)` メソッドを追加する。
+`IMKCandidates` でのクリック選択に対応し、以下を行う:
+
+- Conversion 状態でなければ `false` を返す
+- 指定インデックスの候補を取り出し、学習キャッシュに記録
+- コミットフラグをセットして Empty に遷移、preedit をクリア
 
 ---
 
 ### 2. `ffi/query.rs` に候補 API を追加
 
-```rust
-#[unsafe(no_mangle)]
-pub extern "C" fn karukan_get_candidate_count(session: *const KarukanSession) -> u32 {
-    std::panic::catch_unwind(|| {
-        ffi_ref!(session, 0).candidate_cache.items.len() as u32
-    })
-    .unwrap_or(0)
-}
+以下の3つの FFI 関数を公開する:
 
-#[unsafe(no_mangle)]
-pub extern "C" fn karukan_get_candidate(
-    session: *const KarukanSession,
-    index: u32,
-) -> *const c_char {
-    std::panic::catch_unwind(|| {
-        let s = ffi_ref!(session, std::ptr::null());
-        s.candidate_cache
-            .items
-            .get(index as usize)
-            .map(|c| c.as_ptr())
-            .unwrap_or(std::ptr::null())
-    })
-    .unwrap_or(std::ptr::null())
-}
+- `karukan_get_candidate_count(session)` — 変換候補の件数を返す（変換中でなければ 0）
+- `karukan_get_candidate(session, index)` — index 番目の候補テキスト（null 終端 UTF-8 ポインタ）を返す。ポインタは次の push_*/select_candidate 呼び出しまで有効
+- `karukan_get_candidate_cursor(session)` — 現在選択中の候補インデックスを返す
 
-#[unsafe(no_mangle)]
-pub extern "C" fn karukan_get_candidate_cursor(session: *const KarukanSession) -> u32 {
-    std::panic::catch_unwind(|| ffi_ref!(session, 0).candidate_cache.cursor).unwrap_or(0)
-}
-```
+いずれも `catch_unwind` で Rust パニックから保護し、失敗時は 0 または null ポインタを返す。
 
 ### 3. `ffi/input.rs` に `karukan_select_candidate` を追加
 
-```rust
-#[unsafe(no_mangle)]
-pub extern "C" fn karukan_select_candidate(
-    session: *mut KarukanSession,
-    index: u32,
-) -> c_int {
-    std::panic::catch_unwind(AssertUnwindSafe(|| {
-        if ffi_mut!(session).select_candidate(index as usize) { 1 } else { 0 }
-    }))
-    .unwrap_or(0)
-}
-```
+`karukan_select_candidate(session, index)` FFI 関数を追加する。
+`session.select_candidate(index as usize)` を呼び、成功なら 1、失敗なら 0 を返す。
+`catch_unwind` でパニック保護済み。
 
 ### 4. `karukan-macos/include/karukan_macos.h` に宣言を追加
 
-```c
-// ── 候補 ─────────────────────────────────────────────
-/// 変換候補の数を返す。変換中でなければ 0。
-uint32_t    karukan_get_candidate_count(const KarukanSession* session);
+C ヘッダーに以下の4関数を宣言する:
 
-/// index 番目の候補テキスト（null 終端 UTF-8）を返す。
-/// ポインタは次の push_* / select_candidate 呼び出しまで有効。
-const char* karukan_get_candidate(const KarukanSession* session, uint32_t index);
-
-/// 現在選択中の候補インデックスを返す。
-uint32_t    karukan_get_candidate_cursor(const KarukanSession* session);
-
-/// 候補を index で選択してコミットする。
-/// 戻り値: 1=成功, 0=失敗（変換中でないか範囲外）
-int         karukan_select_candidate(KarukanSession* session, uint32_t index);
-```
+| 関数 | 説明 |
+|---|---|
+| `karukan_get_candidate_count(session)` | 変換候補の数を返す。変換中でなければ 0 |
+| `karukan_get_candidate(session, index)` | index 番目の候補テキスト（null 終端 UTF-8）へのポインタを返す |
+| `karukan_get_candidate_cursor(session)` | 現在選択中の候補インデックスを返す |
+| `karukan_select_candidate(session, index)` | 候補を index で選択してコミット。戻り値: 1=成功、0=失敗 |
 
 ---
 
@@ -392,131 +178,14 @@ int         karukan_select_candidate(KarukanSession* session, uint32_t index);
 4. `candidates(_:)` を実装（Rust から候補を取得）
 5. `candidateSelected(_:)` を実装（クリック選択）
 
-```swift
-import InputMethodKit
-import OSLog
+### 主な実装ポイント
 
-private let logger = Logger(subsystem: "com.example.karukan", category: "InputController")
-
-@objc(KarukanInputController)
-final class KarukanInputController: IMKInputController {
-
-    private var session: OpaquePointer?
-    private var initialized = false
-    /// 候補ウィンドウ（IMKServer と 1:1）
-    private var candidatesPanel: IMKCandidates?
-
-    // MARK: - Lifecycle
-
-    override init!(server: IMKServer!, delegate: Any!, client: Any!) {
-        super.init(server: server, delegate: delegate, client: client)
-        guard let ptr = karukan_session_new() else { return }
-        session = ptr
-
-        // 候補パネルを生成（セッションごとではなくサーバーごとに 1 つ）
-        candidatesPanel = IMKCandidates(
-            server: server,
-            panelType: kIMKSingleColumnScrollingCandidatePanel
-        )
-
-        let captured = ptr
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let ret = karukan_session_init(captured)
-            logger.info("karukan_session_init: \(ret)")
-            DispatchQueue.main.async { self?.initialized = true }
-        }
-    }
-
-    // MARK: - Key Handling
-
-    override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
-        guard initialized, let session else { return false }
-        guard event.type == .keyDown else { return false }
-
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if flags.contains(.command) || flags.contains(.option) || flags.contains(.control) {
-            return false
-        }
-
-        if let key = KarukanMacOSKey.from(keyCode: event.keyCode) {
-            let consumed = karukan_push_key(session, key.rawValue) != 0
-            updateClientState(client: sender)
-            updateCandidatesPanel(sender: sender)
-            return consumed
-        }
-
-        guard let chars = event.characters,
-              let scalar = chars.unicodeScalars.first,
-              scalar.value >= 0x20 else { return false }
-
-        let consumed = chars.withCString { karukan_push_char(session, $0) != 0 }
-        updateClientState(client: sender)
-        updateCandidatesPanel(sender: sender)
-        return consumed
-    }
-
-    // MARK: - IMKCandidates データソース
-
-    /// Rust から候補を取得して IMKCandidates に渡す。
-    override func candidates(_ sender: Any!) -> [Any]! {
-        guard let session else { return [] }
-        let count = Int(karukan_get_candidate_count(session))
-        return (0..<count).compactMap { idx in
-            karukan_get_candidate(session, UInt32(idx)).map { String(cString: $0) }
-        }
-    }
-
-    /// 候補ウィンドウでクリック or Return 選択された。
-    override func candidateSelected(_ candidateString: NSAttributedString!) {
-        guard let session else { return }
-
-        // 文字列からインデックスを逆引きして select_candidate を呼ぶ
-        let text = candidateString.string
-        let count = Int(karukan_get_candidate_count(session))
-        var idx: UInt32 = 0
-        for i in 0..<count {
-            if let ptr = karukan_get_candidate(session, UInt32(i)),
-               String(cString: ptr) == text {
-                idx = UInt32(i)
-                break
-            }
-        }
-        _ = karukan_select_candidate(session, idx)
-
-        // クライアントにコミット
-        if karukan_has_commit(session) != 0,
-           let ptr = karukan_get_commit(session) {
-            let committed = String(cString: ptr)
-            if !committed.isEmpty {
-                (client() as AnyObject).insertText?(
-                    committed,
-                    replacementRange: NSRange(location: NSNotFound, length: 0)
-                )
-            }
-        }
-        candidatesPanel?.hide()
-        (client() as AnyObject).setMarkedText?(
-            "",
-            selectionRange: NSRange(location: 0, length: 0),
-            replacementRange: NSRange(location: NSNotFound, length: 0)
-        )
-    }
-
-    // MARK: - Private
-
-    /// 候補数に応じてパネルを表示/非表示する。
-    private func updateCandidatesPanel(sender: Any?) {
-        guard let panel = candidatesPanel, let session else { return }
-        let count = karukan_get_candidate_count(session)
-        if count > 0 {
-            panel.update(sender)
-            panel.show(kIMKLocateCandidatesAboveHint)
-        } else {
-            panel.hide()
-        }
-    }
-}
-```
+- `IMKCandidates` はセッションごとではなく `IMKServer` と 1:1 で生成する（`init` で一度だけ生成）
+- `karukan_session_init` はバックグラウンドスレッドで実行し、完了後に `initialized = true` をメインスレッドでセット
+- `handle(_:client:)` は `push_key` / `push_char` の呼び出し後に `updateClientState` と `updateCandidatesPanel` を呼ぶ
+- `candidates(_:)` は `karukan_get_candidate_count` と `karukan_get_candidate` で Rust 側の候補リストを取得して返す
+- `candidateSelected(_:)` は受け取った文字列から候補インデックスを逆引きして `karukan_select_candidate` を呼び、コミット後にパネルを非表示にする
+- `updateCandidatesPanel` は候補数が 0 より大きければ `panel.update` + `panel.show(kIMKLocateCandidatesAboveHint)` を呼び、0 なら `panel.hide()` する
 
 ---
 

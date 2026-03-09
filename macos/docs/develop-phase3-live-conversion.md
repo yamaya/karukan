@@ -9,15 +9,9 @@
 
 ライブ変換とは、スペースキーを押さなくても入力中のひらがなをリアルタイムで漢字変換し、preedit に反映し続ける機能。Enter で確定、Space で通常の候補選択モードへ移行する。
 
-```text
-n i h o n g o → にほんご（ライブ変換：日本語）
-                                 ↓ Enter
-                              「日本語」コミット
-
-n i h o n g o → にほんご（ライブ変換：日本語）
-                                 ↓ Space
-                         候補ウィンドウ表示（Phase 3 と同じ）
-```
+- `nihongo` と入力すると、候補ウィンドウなしで preedit が「日本語」に変わる
+- そのまま Enter → 「日本語」をコミット
+- Space → 候補ウィンドウを表示（Phase 3 と同じ）
 
 ---
 
@@ -49,38 +43,45 @@ Linux 版 `karukan-im` を参照した。ライブ変換の核心的な設計は
 
 ### 状態遷移（Phase 3.5 追加分）
 
-```text
-【Phase 3 既存】
-Empty ──push_char──► Composing
-Composing ──Space──► Conversion
-Conversion ──Return──► Empty
+```mermaid
+stateDiagram-v2
+    [*] --> Empty
+    Empty --> Composing : push_char
 
-【Phase 3.5 追加】
-Composing(live=None) ──[バックグラウンド推論完了]──► Composing(live=Some("日本語"))
-Composing(live=Some) ──Return──► Empty          ★変換済みをコミット
-Composing(live=Some) ──Escape──► Composing(live=None)  ★ひらがな表示に戻る
-Composing(live=None) ──Escape──► Empty          ★全キャンセル（既存）
-Composing(live=Some) ──Space──► Conversion      ★live_candidate を先頭候補に保存
+    Composing --> Composing_live : バックグラウンド推論完了
+    note right of Composing_live : live_candidate = Some("日本語")
+
+    Composing --> Conversion : Space
+    Composing_live --> Conversion : Space（live_candidate を先頭候補に保存）
+    Composing_live --> Composing : Escape（live_candidate をクリア）
+    Composing --> Empty : Escape（全キャンセル）
+    Composing_live --> Empty : Return（変換済みをコミット）
+    Composing --> Empty : Return（ひらがなをコミット）
+    Conversion --> Empty : Return
 ```
 
 ### 非同期推論フロー
 
-```text
-[メインスレッド] push_char('o')
-    │
-    ├─ input_buf 更新
-    ├─ preedit 更新（ひらがな表示）
-    └─ triggerLiveConversion(hiragana="にほんご", gen=42)
-           │
-           ▼
-   [DispatchQueue.global]
-    karukan_convert_top1(session, "ニホンゴ")  ← Arc<KanaKanjiConverter> のみ使用（スレッドセーフ）
-           │
-           ▼ 結果: "日本語"
-   [DispatchQueue.main.async]
-    guard liveConversionGeneration == 42 else { return }  ← stale 廃棄
-    karukan_apply_live_candidate(session, "日本語")
-    flushPreedit()  ← preedit を "日本語" に更新
+```mermaid
+sequenceDiagram
+    participant Main as メインスレッド
+    participant BG as DispatchQueue.global
+    participant Rust as Rust (Arc<KanaKanjiConverter>)
+
+    Main->>Main: push_char('o') → input_buf 更新
+    Main->>Main: preedit 更新（ひらがな表示）
+    Main->>Main: liveConversionGeneration++ (gen=42)
+    Main->>BG: triggerLiveConversion(hiragana="にほんご", gen=42)
+
+    BG->>BG: liveConversionSemaphore.tryWait()<br/>（失敗なら即スキップ）
+    BG->>Rust: karukan_convert_top1(session, "ニホンゴ")
+    Rust-->>BG: "日本語"
+    BG->>BG: semaphore.signal()
+
+    BG->>Main: DispatchQueue.main.async
+    Main->>Main: guard liveConversionGeneration == 42<br/>（stale なら廃棄）
+    Main->>Main: karukan_apply_live_candidate(session, "日本語")
+    Main->>Main: flushPreedit() → preedit を "日本語" に更新
 ```
 
 ---
@@ -89,123 +90,32 @@ Composing(live=Some) ──Space──► Conversion      ★live_candidate を�
 
 ### 1. `KarukanSession` に `live_candidate` フィールドを追加
 
-```rust
-pub struct KarukanSession {
-    state: SessionState,
-    romaji: RomajiConverter,
-    input_buf: InputBuffer,
-    dict: Option<karukan_engine::Dictionary>,
-    learning: Option<LearningCache>,
-    converter: Option<Arc<KanaKanjiConverter>>,
-    /// ライブ変換の結果。Some = 変換済み文字を preedit に表示中。
-    /// karukan-im の `live.text` に相当。
-    live_candidate: Option<String>,      // ← 追加
-    pub(crate) preedit: PreeditCache,
-    pub(crate) commit: CommitCache,
-    pub(crate) candidate_cache: CandidateCache,
-}
-```
-
-`new()` で `live_candidate: None` を追加。
+- `live_candidate: Option<String>` を追加（`karukan-im` の `live.text` に相当）
+- `new()` で `None` で初期化する
 
 ### 2. `do_commit()` を修正（Enter 確定）
 
-```rust
-fn do_commit(&mut self) {
-    // ローマ字バッファをフラッシュ
-    let prev_len = self.romaji.output().chars().count();
-    let _ = self.romaji.flush();
-    let flushed: String = self.romaji.output().chars().skip(prev_len).collect();
-    if !flushed.is_empty() {
-        self.input_buf.insert(&flushed);
-    }
-
-    // ライブ変換中なら変換済みテキストをコミット（karukan-im と同じ）
-    let committed = if let Some(live) = self.live_candidate.take() {
-        let hiragana = self.input_buf.text.clone();
-        if let Some(cache) = &mut self.learning {
-            cache.record(&hiragana, &live);
-        }
-        live
-    } else {
-        std::mem::take(&mut self.input_buf.text)
-    };
-
-    self.input_buf.cursor_chars = 0;
-    self.romaji.reset();
-    self.state = SessionState::Empty;
-
-    self.commit.text = CString::new(committed).unwrap_or_default();
-    self.commit.dirty = true;
-    self.update_preedit("");
-}
-```
+- ローマ字バッファをフラッシュし、未確定文字を `input_buf` に反映する
+- `live_candidate` が `Some` の場合はその変換済みテキストをコミットし、学習キャッシュに記録する
+- `None` の場合は従来通り `input_buf.text` をそのままコミットする
+- コミット後は `input_buf`、`romaji`、`state` をリセットして Empty に遷移する
 
 ### 3. `do_cancel()` を修正（2段階 Escape）
 
-```rust
-fn do_cancel(&mut self) {
-    // karukan-im の cancel_composing() と同じ 2段階動作:
-    // 1回目: live_candidate をクリアしてひらがな表示に戻る
-    // 2回目: 全キャンセル
-    if self.live_candidate.take().is_some() {
-        let preedit_text = format!("{}{}", self.input_buf.text, self.romaji.buffer());
-        self.update_preedit(&preedit_text);
-        return;
-    }
-
-    self.romaji.reset();
-    self.input_buf.clear();
-    self.state = SessionState::Empty;
-    self.update_preedit("");
-}
-```
+- `live_candidate` が `Some` のとき: `take()` でクリアし、ひらがな + romaji_buf を preedit に表示して返る（2段階の1回目）
+- `live_candidate` が `None` のとき: romaji・input_buf をリセットして Empty に遷移する（2段階の2回目）
 
 ### 4. `do_conversion()` を修正（Space → live_candidate を先頭候補に）
 
-`collect_candidates()` の呼び出し後、`live_candidate` を先頭に挿入する（karukan-im の `prev_suggest_text` 処理）。
-
-```rust
-fn do_conversion(&mut self) {
-    // ... 既存の romaji flush 処理 ...
-
-    let hiragana = self.input_buf.text.clone();
-    if hiragana.is_empty() { /* ... 全角スペース ... */ return; }
-
-    // live_candidate を取り出し、候補の先頭に保存
-    let prev_live = self.live_candidate.take();
-
-    let mut candidates = self.collect_candidates(&hiragana);
-
-    // live_candidate が候補リストにない場合のみ先頭に挿入
-    // (表示していた変換が消えないようにする — karukan-im の prev_suggest_text と同じ)
-    if let Some(live) = prev_live {
-        if live != hiragana && !candidates.contains(&live) {
-            candidates.insert(0, live);
-        }
-    }
-
-    // ... 既存の CandidateCache 更新・SessionState::Conversion 遷移 ...
-}
-```
+- `collect_candidates()` 呼び出し前に `live_candidate.take()` で値を取り出す
+- 候補リストに `live_candidate` が含まれていない場合のみ先頭に挿入する（karukan-im の `prev_suggest_text` 処理）
+- これにより、ライブ変換で表示していた結果が候補ウィンドウ表示後も先頭に残る
 
 ### 5. `apply_live_candidate()` を追加
 
-```rust
-/// バックグラウンドスレッドの推論結果を適用する（メインスレッドから呼ぶ）。
-///
-/// live_candidate をセットして preedit を変換済みテキストに更新する。
-/// 入力が変わっていた場合は Swift 側の generation counter で弾くため、
-/// ここでは無条件に適用する。
-pub fn apply_live_candidate(&mut self, candidate: &str) {
-    self.live_candidate = Some(candidate.to_string());
-
-    // preedit: 変換済みテキストを表示（ひらがなの代わり）
-    self.preedit.text = CString::new(candidate).unwrap_or_default();
-    self.preedit.caret_bytes = candidate.len() as u32;
-    self.preedit.dirty = true;
-}
-```
+- バックグラウンドスレッドの推論結果をメインスレッドから適用する関数
+- `live_candidate` にセットし、preedit を変換済みテキストに更新する
+- Swift 側の世代カウンタで stale な結果は事前に弾くため、ここでは無条件に適用する
 
 ---
 
@@ -213,141 +123,37 @@ pub fn apply_live_candidate(&mut self, candidate: &str) {
 
 ### 6. `ffi/query.rs` — `karukan_get_composing_hiragana` を追加
 
-バックグラウンドスレッドが推論を起動する前に、現在のひらがなを取得するため。
+バックグラウンドスレッドが推論を起動する前に、メインスレッドで現在のひらがなを取得するための関数。
 
-```rust
-/// Composing 状態の現在のひらがなを `buf` にコピーする。
-/// 戻り値: コピーした文字数（null 終端含まず）。Composing でなければ 0。
-/// スレッドセーフ: メインスレッドからのみ呼ぶこと。
-#[unsafe(no_mangle)]
-pub extern "C" fn karukan_get_composing_hiragana(
-    session: *const KarukanSession,
-    buf: *mut c_char,
-    buf_len: usize,
-) -> c_int {
-    std::panic::catch_unwind(|| {
-        let s = ffi_ref!(session, 0);
-        if !matches!(s.state, SessionState::Composing) {
-            return 0;
-        }
-        let text = &s.input_buf.text;
-        let bytes = text.as_bytes();
-        let copy_len = bytes.len().min(buf_len.saturating_sub(1));
-        if copy_len == 0 || buf.is_null() {
-            return 0;
-        }
-        unsafe {
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf as *mut u8, copy_len);
-            *buf.add(copy_len) = 0;
-        }
-        copy_len as c_int
-    })
-    .unwrap_or(0)
-}
-```
+- `Composing` 状態でなければ 0 を返す
+- UTF-8 バイト列を呼び出し側のバッファにコピーし、コピーした文字数を返す
+- **メインスレッドからのみ呼ぶこと**（セッション状態への読み取りアクセス）
 
 ### 7. `ffi/query.rs` — `karukan_convert_top1` / `karukan_free_string` を追加
 
 バックグラウンドスレッドから安全に呼べる変換 API。**セッションのミュータブルな状態には触れず、`Arc<KanaKanjiConverter>` のみを使う**。
 
-```rust
-/// ひらがなをカタカナに変換して上位1候補を返す（ヒープ確保 CString）。
-///
-/// # スレッドセーフ
-/// `session` の `converter` フィールドは `Arc<KanaKanjiConverter>` であり
-/// `Send + Sync` のため、バックグラウンドスレッドから呼んでも安全。
-/// ただし `session` が同時に解放・変更されないことを呼び出し側が保証すること。
-///
-/// 戻り値: UTF-8 文字列（`karukan_free_string` で解放）。失敗時は null。
-#[unsafe(no_mangle)]
-pub extern "C" fn karukan_convert_top1(
-    session: *const KarukanSession,
-    hiragana_utf8: *const c_char,
-) -> *mut c_char {
-    std::panic::catch_unwind(|| {
-        let s = ffi_ref!(session, std::ptr::null_mut());
-        let Some(conv) = s.converter.as_ref() else {
-            return std::ptr::null_mut();
-        };
-        let hiragana = unsafe { std::ffi::CStr::from_ptr(hiragana_utf8) }
-            .to_str()
-            .unwrap_or("");
-        let katakana = karukan_engine::kana::hiragana_to_katakana(hiragana);
-        match conv.convert(&katakana, "", 1) {
-            Ok(candidates) if !candidates.is_empty() => {
-                CString::new(candidates[0].clone())
-                    .map(|s| s.into_raw())
-                    .unwrap_or(std::ptr::null_mut())
-            }
-            _ => std::ptr::null_mut(),
-        }
-    })
-    .unwrap_or(std::ptr::null_mut())
-}
-
-/// `karukan_convert_top1` が返したポインタを解放する。
-#[unsafe(no_mangle)]
-pub extern "C" fn karukan_free_string(ptr: *mut c_char) {
-    if !ptr.is_null() {
-        unsafe { drop(CString::from_raw(ptr)); }
-    }
-}
-```
+- `karukan_convert_top1`: ひらがなをカタカナに変換して推論し、上位1候補をヒープ確保した C 文字列として返す
+    - `converter` が `None`（モデル未ロード）の場合は `null` を返す
+    - `Arc<KanaKanjiConverter>` は `Send + Sync` のためバックグラウンドスレッドから安全に呼べる
+- `karukan_free_string`: `karukan_convert_top1` が返したポインタを解放する
 
 ### 8. `ffi/input.rs` — `karukan_apply_live_candidate` を追加
 
-```rust
-/// バックグラウンド推論の結果を適用する。メインスレッドからのみ呼ぶこと。
-///
-/// 戻り値: 1=適用成功（preedit が dirty）、0=Composing 状態でない（無視）
-#[unsafe(no_mangle)]
-pub extern "C" fn karukan_apply_live_candidate(
-    session: *mut KarukanSession,
-    candidate_utf8: *const c_char,
-) -> c_int {
-    std::panic::catch_unwind(AssertUnwindSafe(|| {
-        let s = ffi_mut!(session);
-        if !matches!(s.state, SessionState::Composing) {
-            return 0;
-        }
-        let candidate = unsafe { std::ffi::CStr::from_ptr(candidate_utf8) }
-            .to_str()
-            .unwrap_or("");
-        s.apply_live_candidate(candidate);
-        1
-    }))
-    .unwrap_or(0)
-}
-```
+- バックグラウンド推論の結果をセッションに適用する。**メインスレッドからのみ呼ぶこと**
+- `Composing` 状態でなければ 0 を返して無視する
+- 成功時は 1 を返す（preedit が dirty になる）
 
 ### 9. `karukan-macos/include/karukan_macos.h` に宣言を追加
 
-```c
-// ── ライブ変換 ──────────────────────────────────────────────────────────────
+追加する C API の概要：
 
-/// Composing 状態のひらがなを buf にコピーする。
-/// バックグラウンドスレッドで呼ぶ前にメインスレッドで取得すること。
-int karukan_get_composing_hiragana(
-    const KarukanSession* session,
-    char* buf,
-    size_t buf_len);
-
-/// ひらがなをカタカナ変換して上位1候補を返す（ヒープ確保）。
-/// Arc<KanaKanjiConverter> のみ使用するためバックグラウンドスレッドから呼べる。
-/// 戻り値は karukan_free_string で解放すること。
-char* karukan_convert_top1(
-    const KarukanSession* session,
-    const char* hiragana_utf8);
-
-/// karukan_convert_top1 の戻り値を解放する。
-void karukan_free_string(char* ptr);
-
-/// バックグラウンド推論結果を session に適用する。メインスレッドからのみ呼ぶこと。
-/// 戻り値: 1=適用成功, 0=Composing 状態でないため無視
-int karukan_apply_live_candidate(
-    KarukanSession* session,
-    const char* candidate_utf8);
-```
+| 関数名 | 役割 | 呼び出しスレッド |
+|---|---|---|
+| `karukan_get_composing_hiragana` | Composing 状態のひらがなをバッファにコピー | メインスレッド |
+| `karukan_convert_top1` | ひらがな→上位1候補（ヒープ確保 C 文字列） | バックグラウンド可 |
+| `karukan_free_string` | `karukan_convert_top1` の戻り値を解放 | バックグラウンド可 |
+| `karukan_apply_live_candidate` | 推論結果をセッションに適用 | メインスレッド |
 
 ---
 
@@ -355,113 +161,33 @@ int karukan_apply_live_candidate(
 
 ### 10. generation counter とライブ変換トリガー
 
-プロパティとして以下を追加する。
+追加するプロパティ：
 
-```swift
-/// ライブ変換の世代カウンタ。
-/// push_char のたびにインクリメントし、stale な推論結果を廃棄するために使う。
-private var liveConversionGeneration: Int = 0
+- `liveConversionGeneration: Int` — push_char のたびにインクリメントする世代カウンタ。バックグラウンドで完了した推論が stale かどうかを判定するために使う
+- `liveConversionSemaphore: DispatchSemaphore(value: 1)` — 同時推論を1件に制限する。前の推論が走っていれば新規タスクをスキップ（非ブロッキング `tryWait`）し、スレッド飽和・ビーチボールを防ぐ
+- `kLiveConversionMaxChars = 15` — ライブ変換を起動する最大ひらがな文字数。超過時は変換完了後に自動コミットして新規 Composing に移行する
 
-/// 同時推論を 1 件に制限するセマフォ。
-/// 前の推論が終わっていなければ新規タスクをスキップする（スレッド爆発防止）。
-private let liveConversionSemaphore = DispatchSemaphore(value: 1)
+`triggerLiveConversion` の処理フロー：
 
-/// ライブ変換を起動する最大ひらがな文字数。
-/// 超えた直後の変換完了時に自動コミットし、新規 Composing に移行する。
-private static let kLiveConversionMaxChars = 15
-```
-
-`triggerLiveConversion` の実装。2つのガードを追加している。
-
-```swift
-private func triggerLiveConversion(sender: Any?) {
-    guard let session else { return }
-
-    var buf = [CChar](repeating: 0, count: 512)
-    let len = karukan_get_composing_hiragana(session, &buf, buf.count)
-    guard len > 0 else { return }
-    let hiragana = String(cString: buf)
-
-    liveConversionGeneration &+= 1
-    let gen = liveConversionGeneration
-
-    // [self] strong capture: deinit はメインスレッドで動くため、
-    // このクロージャが完了するまで karukan_session_free は呼ばれない。
-    DispatchQueue.global(qos: .userInitiated).async { [self] in
-
-        // ── ガード 1: 同時推論を 1 件に制限 ──────────────────────────────
-        // 前の推論が走っていれば今回はスキップ（非ブロッキング tryWait）。
-        // これにより長文タイピング時のスレッド飽和・ビーチボールを防ぐ。
-        guard liveConversionSemaphore.wait(timeout: .now()) == .success else {
-            return
-        }
-        defer { liveConversionSemaphore.signal() }
-
-        let resultPtr = karukan_convert_top1(session, hiragana)
-        guard let resultPtr else { return }
-        let candidate = String(cString: resultPtr)
-        karukan_free_string(resultPtr)
-
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            // ── ガード 2: stale な結果を廃棄 ───────────────────────────────
-            guard self.liveConversionGeneration == gen else { return }
-
-            if karukan_apply_live_candidate(session, candidate) != 0 {
-                // ── 長文自動コミット ────────────────────────────────────────
-                // 入力が上限を超えていたら変換結果をそのままコミットして新規 Composing へ。
-                // handle() 側でなくここでコミットする理由:
-                //   apply_live_candidate 後は live_candidate が Some(漢字) になっているため、
-                //   do_commit が漢字をコミットできる（ひらがなコミットにならない）。
-                if hiragana.count > Self.kLiveConversionMaxChars {
-                    _ = karukan_push_key(session, KarukanMacOSKey.returnKey.rawValue)
-                }
-                self.updateClientState(client: sender ?? self.client())
-            }
-        }
-    }
-}
-```
+1. `karukan_get_composing_hiragana` でひらがなを取得（0 ならスキップ）
+2. `liveConversionGeneration` をインクリメントして現在の世代 `gen` を保存
+3. `DispatchQueue.global` で非同期実行開始
+4. セマフォの `tryWait` を試みる（取得できなければスキップ）
+5. `karukan_convert_top1` で推論を実行し、結果を `karukan_free_string` で解放
+6. `DispatchQueue.main.async` でメインスレッドに戻る
+7. 世代カウンタが `gen` と一致しなければ廃棄（stale チェック）
+8. `karukan_apply_live_candidate` を適用し、ひらがな文字数が上限超えなら自動コミット（`returnKey` を送信）
+9. `updateClientState` で preedit を更新する
 
 ### 11. `handle(_:client:)` での呼び出し
 
-`push_char` の後にライブ変換を起動する。
-
-```swift
-override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
-    guard initialized, let session else { return false }
-    currentSender = sender
-    // ...（既存の modifier チェック）...
-
-    var consumed = false
-
-    if let key = KarukanMacOSKey.from(keyCode: event.keyCode) {
-        consumed = karukan_push_key(session, key.rawValue) != 0
-    } else if let chars = event.characters, /* printable */ {
-        consumed = chars.withCString { karukan_push_char(session, $0) != 0 }
-
-        // 文字入力後にライブ変換をトリガー
-        if consumed {
-            triggerLiveConversion(sender: sender)
-        }
-    }
-
-    updateClientState(client: sender)
-    updateCandidatesPanel(sender: sender)
-    return consumed
-}
-```
+- `push_char` 経由で文字が処理されたとき（`consumed == true`）、`triggerLiveConversion(sender:)` を呼び出す
+- `push_key` パス（Space・Enter・Escape など）では呼ばない
 
 ### 12. generation counter のリセット
 
-preedit がクリアされる（Empty 状態に戻る）タイミングで generation を無効化する。`updateClientState` 内、またはコミット後に行う。
-
-```swift
-// Empty になったらカウンタをリセット（残存タスクが apply しても弾かれるよう世代を変える）
-if karukan_is_empty(session) != 0 {
-    liveConversionGeneration &+= 1
-}
-```
+- `updateClientState` 内などで `karukan_is_empty` を確認し、Empty になったタイミングで `liveConversionGeneration` をインクリメントする
+- これにより、残存する非同期タスクが完了しても適用されなくなる
 
 ---
 
@@ -544,128 +270,55 @@ if karukan_is_empty(session) != 0 {
 
 ローマ字入力で子音キー（k, s, t, …）を打った瞬間、preedit に「k」が一瞬表示されてからかなに変わる"ちらつき"が発生する。これを解消するため、**子音のみ pending の状態では preedit 更新を一定時間（デフォルト 0.1s）遅延**し、後続キーが来ればかなだけを表示する。
 
-```text
-通常:
-  k  → preedit "k" → a → preedit "か"
-       ↑ ちらつき
-
-遅延版:
-  k  → (何も表示せず 0.1s 待つ) → a → preedit "か"   ← 高速入力: ちらつきなし
-  k  → (0.1s 経過)              → preedit "k"         ← 低速入力: 遅延後に表示
-```
+- 高速入力時（0.1s 以内に次キー）: 「k」が preedit に表示されず、直接「か」が表示される（ちらつきなし）
+- 低速入力時（0.1s 以上待つ）: タイマー発火後に「k」が表示される（従来通り）
 
 ### 設計方針
 
 - **Rust 側は即座にキーを処理する**（romaji の状態は常に最新）
 - **Swift 側で preedit の UI 更新のみを遅延する**（Timer ベース）
 - 遅延秒数は `config.toml` の `consonant_delay_sec` で設定可能（デフォルト 0.1、0 なら即表示＝従来動作）
-  - 当初 0.2s で実装したが体感でもたつきがあったため 0.1s に調整
+    - 当初 0.2s で実装したが体感でもたつきがあったため 0.1s に調整
 
 ### Rust 側変更
 
 #### `session.rs` — `is_consonant_pending()` を追加
 
-直前のキー入力が子音であり、romaji converter がまだかなに変換していない（母音待ち）状態を判定する。
-`input_buf` にすでにかなが存在するかは問わない（「か**k**」の 2 文字目の "k" でも遅延する）。
+romaji converter に未確定の子音が残っているか（母音待ち状態か）を判定する関数。
 
-```rust
-/// romaji converter に未確定の子音が残っているか。
-/// 「k」「sh」「ch」など母音待ちの状態で true を返す。
-/// Swift 側が preedit 遅延の判定に使う。
-pub fn is_consonant_pending(&self) -> bool {
-    self.romaji.has_pending()
-}
-```
+- `romaji.has_pending()` の結果を返す
+- `input_buf` にすでにかなが存在するかは問わない（「か**k**」の 2 文字目の "k" でも遅延する）
+- Swift 側が preedit 遅延の判定に使う
 
 #### `ffi/query.rs` — `karukan_is_consonant_pending` を追加
 
-```rust
-/// 子音のみ pending かを返す（1=pending, 0=それ以外）。
-#[unsafe(no_mangle)]
-pub extern "C" fn karukan_is_consonant_pending(
-    session: *const KarukanSession,
-) -> c_int {
-    std::panic::catch_unwind(|| {
-        if ffi_ref!(session, 0).is_consonant_pending() { 1 } else { 0 }
-    })
-    .unwrap_or(0)
-}
-```
+- 子音 pending であれば 1、それ以外は 0 を返す C API
+- `session.is_consonant_pending()` を呼び出してラップする
 
 #### `karukan_macos.h` に宣言を追加
 
-```c
-/// 子音のみ pending かを返す（1=pending, 0=それ以外）。
-int karukan_is_consonant_pending(const KarukanSession* session);
-```
+- `int karukan_is_consonant_pending(const KarukanSession* session)` を追加
 
 ### Swift 側変更（`KarukanInputController.swift`）
 
 #### プロパティ追加
 
-```swift
-/// 子音 pending 遅延表示用タイマー。
-/// タイマー発火前に次のキーが来ればキャンセルされ、ちらつきを防ぐ。
-private var consonantDelayTimer: Timer?
+- `consonantDelayTimer: Timer?` — 子音 pending 遅延表示用タイマー。タイマー発火前に次のキーが来ればキャンセルされ、ちらつきを防ぐ
+- `consonantDelaySec: TimeInterval = 0.1` — 子音 pending 遅延秒数（0 で無効＝従来動作）
 
-/// 子音 pending 遅延秒数（0 で無効＝従来動作）。
-private let consonantDelaySec: TimeInterval = 0.1
-```
+#### `handle(_:client:)` の変更フロー
 
-#### `handle(_:client:)` の変更
-
-```swift
-override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
-    guard initialized, let session else { return false }
-    currentSender = sender
-
-    // ── 1. 既存の遅延タイマーをキャンセル ──
-    consonantDelayTimer?.invalidate()
-    consonantDelayTimer = nil
-
-    // ── 2. Rust にキーを送る（常に即座に処理） ──
-    var consumed = false
-    if let key = KarukanMacOSKey.from(keyCode: event.keyCode) {
-        consumed = karukan_push_key(session, key.rawValue) != 0
-    } else if let chars = event.characters {
-        consumed = chars.withCString { karukan_push_char(session, $0) != 0 }
-        if consumed { triggerLiveConversion(sender: sender) }
-    }
-
-    // ── 3. 子音 pending なら preedit 更新を遅延 ──
-    if consonantDelaySec > 0
-        && karukan_is_consonant_pending(session) != 0
-    {
-        // 候補パネルは即更新（preedit だけ遅延）
-        updateCandidatesPanel(sender: sender)
-
-        consonantDelayTimer = Timer.scheduledTimer(
-            withTimeInterval: consonantDelaySec,
-            repeats: false
-        ) { [weak self] _ in
-            guard let self else { return }
-            self.consonantDelayTimer = nil
-            self.updateClientState(client: sender ?? self.client())
-        }
-        return consumed
-    }
-
-    // ── 4. 通常パス: 即座に preedit 更新 ──
-    updateClientState(client: sender)
-    updateCandidatesPanel(sender: sender)
-    return consumed
-}
-```
+1. 既存の遅延タイマーをキャンセル（`consonantDelayTimer?.invalidate()`）
+2. Rust にキーを送る（常に即座に処理）
+3. `push_char` のとき `triggerLiveConversion` を起動
+4. 子音 pending 状態（`karukan_is_consonant_pending != 0`）なら:
+    - 候補パネルは即更新（preedit だけ遅延）
+    - タイマーをセットし、発火時に `updateClientState` を呼ぶ
+5. 通常パス: 即座に `updateClientState` + `updateCandidatesPanel`
 
 #### `deactivateServer` でのクリーンアップ
 
-```swift
-override func deactivateServer(_ sender: Any!) {
-    consonantDelayTimer?.invalidate()
-    consonantDelayTimer = nil
-    // ... 既存の deactivate 処理 ...
-}
-```
+- `deactivateServer` 時に `consonantDelayTimer?.invalidate()` を呼び、タイマーを破棄する
 
 ### ライブ変換との相互作用
 
@@ -680,23 +333,17 @@ override func deactivateServer(_ sender: Any!) {
 ### テスト要件
 
 ```text
-[ ] "ka" を高速入力（< 0.1s 間隔）→ "k" が preedit に表示されず「か」だけ表示
-[ ] "k" を入力して 0.1s 以上待つ → preedit に "k" が表示される
-[ ] "k" の後に "k" → "っ" に変換される（タイマーリセット動作）
-[ ] consonantDelaySec = 0 の場合 → 従来動作（即座に "k" を表示）
-[ ] 子音 pending 中にアプリ切替（deactivateServer）→ クラッシュしない
-[ ] ライブ変換 ON 時: "nihongo" 高速入力 → ちらつきなく「日本語」が表示される
+[x] "ka" を高速入力（< 0.1s 間隔）→ "k" が preedit に表示されず「か」だけ表示
+[x] "k" を入力して 0.1s 以上待つ → preedit に "k" が表示される
+[x] "k" の後に "k" → "っ" に変換される（タイマーリセット動作）
+[x] consonantDelaySec = 0 の場合 → 従来動作（即座に "k" を表示）
+[x] 子音 pending 中にアプリ切替（deactivateServer）→ クラッシュしない
+[x] ライブ変換 ON 時: "nihongo" 高速入力 → ちらつきなく「日本語」が表示される
 ```
 
 ### 設定
 
-将来的に `~/.config/karukan-im/config.toml` で遅延秒数を設定可能にする。
-
-```toml
-[input]
-# 子音 pending 時の preedit 遅延（秒）。0 で無効。
-consonant_delay_sec = 0.1
-```
+将来的に `~/.config/karukan-im/config.toml` で遅延秒数を設定可能にする。設定キーは `[input]` セクションの `consonant_delay_sec`（型: float、デフォルト: 0.1、0 で無効）。
 
 ---
 
@@ -710,35 +357,21 @@ Phase 3.5 のライブ変換では、キー入力のたびに preedit がひら�
 
 #### 症状
 
-```text
-"オフィシャルオンライ" → n → n →
-setMarkedText: 'おふぃしゃるおんらいん'  ← ひらがなに戻る
-```
+「オフィシャルオンライ」を入力後に `n` → `n` と続けると、2回目の push_char 後に preedit がひらがな（`おふぃしゃるおんらいん`）に戻る。
 
 #### 原因
 
-`push_char()` 内で `self.live_candidate.take()` を使っていたため、1回目の push_char で `live_candidate` が消費され、2回目では `None` になりひらがなにフォールバックしていた。子音遅延で1回目の preedit 更新がスキップされると、2回目で `prev_live = None` となり問題が顕在化する。
+`push_char()` 内で `live_candidate` を `take()`（ムーブ）していたため、1回目の push_char で `live_candidate` が消費される。子音遅延で1回目の preedit 更新がスキップされると、2回目では `None` になりひらがなにフォールバックしていた。
 
 #### 修正
 
-`take()` → `clone()` に変更。`live_candidate` は `apply_live_candidate()` が新しい結果で上書きするか、`do_commit()` / `do_cancel()` で消費されるまで保持する。
-
-```rust
-// Before:
-let prev_live = self.live_candidate.take();
-
-// After:
-let prev_live = self.live_candidate.clone();
-```
+`take()` を `clone()` に変更。`live_candidate` は `apply_live_candidate()` が新しい結果で上書きするか、`do_commit()` / `do_cancel()` で消費されるまで保持し続ける。
 
 ### 問題 2: Backspace 後に stale な live_candidate が残留
 
 #### 症状
 
-```text
-"オフィシャル" → Backspace×全削除 → "o" →
-setMarkedText: 'オフィシャル'  ← 削除済みの結果が復活して消える
-```
+「オフィシャル」を入力後に Backspace で全削除し、再び `o` を入力すると、削除済みのライブ変換結果が一瞬復活してから消える。
 
 #### 原因
 
@@ -752,14 +385,7 @@ setMarkedText: 'オフィシャル'  ← 削除済みの結果が復活して消
 
 #### 症状
 
-```text
-"今日h" → a →
-setMarkedText: '今日'    ← 文字減（カーソル後退）
-→ ライブ変換完了 →
-setMarkedText: '今日は'  ← 文字増（カーソル前進）
-```
-
-`setMarkedText` で文字数が減→増と変化し、カーソルが前後にジャンプして不快。
+「今日h」の後に `a` を入力すると、preedit が一瞬「今日」（文字減）に戻り、その後「今日は」（文字増）になるためカーソルが前後にジャンプして不快になる。
 
 #### 原因
 
@@ -769,22 +395,8 @@ preedit を `prev_live + romaji_buf` で構築していたため、子音が母�
 
 preedit を `prev_live + new_hiragana + romaji_buf` で構築するように変更。新たに生成されたかなを即座に prev_live に付加することで文字数が減る中間状態を防ぐ。
 
-```rust
-// Before:
-let preedit_text = format!("{}{}", display_base, romaji_buf);
-
-// After:
-let preedit_text = if let Some(ref live) = prev_live {
-    format!("{}{}{}", live, new_hiragana, romaji_buf)
-} else {
-    format!("{}{}", self.input_buf.text, romaji_buf)
-};
-```
-
-```text
-Before: "今日h" → "今日"  → "今日は"  (文字減→増、カーソルジャンプ)
-After:  "今日h" → "今日は" → "今日は"  (文字数単調増加、スムーズ)
-```
+- 修正前: `「今日h」→「今日」→「今日は」`（文字減→増、カーソルジャンプ）
+- 修正後: `「今日h」→「今日は」→「今日は」`（文字数単調増加、スムーズ）
 
 ---
 
