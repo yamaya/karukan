@@ -39,9 +39,9 @@ git commit -m "build(xcode): remove user-specific scheme configuration"
 - 開発経緯メモとして公開する方針で確定
 - コードブロックを除去し、状態遷移図・フロー図を Mermaid に書き直し済み
 
-### リモートが `git@github.com:yamaya/karukan.git`
+### リモートが `git@github.com:yamaya/karukan.git` ... 済み
 
-- 公開先のリポジトリ名・オーナーが意図通りか確認
+- `yamaya/karukan` が意図通りの公開先であることを確認済み
 
 ---
 
