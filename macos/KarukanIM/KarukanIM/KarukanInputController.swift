@@ -5,7 +5,7 @@ import Cocoa
 import InputMethodKit
 import OSLog
 
-private let logger = Logger(subsystem: "com.example.karukan", category: "InputController")
+private let logger = Logger(subsystem: "io.github.yamaya.karukan", category: "InputController")
 
 // ---------------------------------------------------------------------------
 // MARK: - KarukanInputController

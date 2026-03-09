@@ -9,7 +9,7 @@ import Foundation
 enum SettingStore {
 
     /// App Group suite name（Preference Pane と IME で共通）。
-    static let suiteName = "com.example.inputmethod.KarukanIM"
+    static let suiteName = "io.github.yamaya.inputmethod.KarukanIM"
 
     /// 共有 UserDefaults。suite が利用できない場合は .standard にフォールバック。
     /// computed property にするとアクセスのたびに新規インスタンスが生成され

@@ -23,12 +23,11 @@ git commit -m "build(xcode): remove user-specific scheme configuration"
 
 ## 要検討（push 前に判断）
 
-### Bundle ID が `com.example.*` のまま
+### Bundle ID が `com.example.*` のまま ... 済み
 
-- `com.example.inputmethod.KarukanIM`
-- `com.example.inputmethod.karukan.Japanese`
-- OSS として公開する場合、このまま通すか実際のドメインに変えるかを決める
-- 変更箇所: `macos/KarukanIM/KarukanIM/Info.plist`、`macos/KarukanIM/KarukanIMExtension/Info.plist`、`project.pbxproj`
+- `io.github.yamaya.inputmethod.KarukanIM` に変更済み
+- `io.github.yamaya.inputmethod.karukan.Japanese` に変更済み
+- 変更箇所: `Info.plist` ×2、`project.pbxproj`、Swift ソース（Logger/suiteName/connection）
 
 ### `macos/docs/security-audit.md` が未追跡 ... 済み
 

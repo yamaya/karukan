@@ -621,7 +621,7 @@
 					"-L$(SRCROOT)/../../target/debug",
 					"-lkarukan_macos",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.inputmethod.KarukanIM;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.yamaya.inputmethod.KarukanIM;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -659,7 +659,7 @@
 					"-L$(SRCROOT)/../../target/release",
 					"-lkarukan_macos",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.inputmethod.KarukanIM;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.yamaya.inputmethod.KarukanIM;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -680,7 +680,7 @@
 				DEVELOPMENT_TEAM = CFSF629G3P;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.karukan.KarukanIMTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.yamaya.karukan.KarukanIMTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -700,7 +700,7 @@
 				DEVELOPMENT_TEAM = CFSF629G3P;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.karukan.KarukanIMTests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.yamaya.karukan.KarukanIMTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -719,7 +719,7 @@
 				DEVELOPMENT_TEAM = CFSF629G3P;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.karukan.KarukanIMUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.yamaya.karukan.KarukanIMUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -738,7 +738,7 @@
 				DEVELOPMENT_TEAM = CFSF629G3P;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.karukan.KarukanIMUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.yamaya.karukan.KarukanIMUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = NO;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
@@ -774,7 +774,7 @@
 					"-L$(SRCROOT)/../../target/debug",
 					"-lkarukan_macos",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.inputmethod.KarukanIM.KarukanIMExtension;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.yamaya.inputmethod.KarukanIM.KarukanIMExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -811,7 +811,7 @@
 					"-L$(SRCROOT)/../../target/release",
 					"-lkarukan_macos",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.inputmethod.KarukanIM.KarukanIMExtension;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.yamaya.inputmethod.KarukanIM.KarukanIMExtension;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;

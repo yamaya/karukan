@@ -28,7 +28,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // IMKServer を起動。InputMethodConnectionName と一致する名前を使う。
         server = IMKServer(
-            name: "com.example.inputmethod.KarukanIM_Connection",
+            name: "io.github.yamaya.inputmethod.KarukanIM_Connection",
             bundleIdentifier: Bundle.main.bundleIdentifier
         )
     }
