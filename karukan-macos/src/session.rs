@@ -505,7 +505,15 @@ impl KarukanSession {
             return;
         }
         // source が現在の input_buf.text と異なる場合は stale — 無視する。
-        if source != self.input_buf.text {
+        // romaji バッファに未確定子音がある場合も stale として扱う:
+        //   `s` 入力後は input_buf.text は変化しないが、有効な入力は変わっている。
+        //   auto-commit が pending 子音を失うのを防ぐ。
+        if source != self.input_buf.text || !self.romaji.buffer().is_empty() {
+            // preedit.dirty を false にリセットして FFI が 0 を返すようにする。
+            // これにより Swift 側の auto-commit path が発火しない。
+            // （push_char が設定した preedit.dirty = true が残ると、FFI が 1 を返して
+            //   auto-commit が誤トリガーされる。）
+            self.preedit.dirty = false;
             return;
         }
         self.clear_flags();
@@ -2495,9 +2503,11 @@ mod tests {
         s.push_char('a'); // input_buf = "あ"
         s.push_char('k'); // romaji buffer = "k"
 
+        // romaji バッファに未確定子音がある場合は apply_live_candidate を無視する。
+        // auto-commit が pending 子音を失うのを防ぐため。
         s.apply_live_candidate("亜", "あ");
-        // preedit = "亜" + "k"
-        assert_eq!(s.preedit.text.to_str().unwrap(), "亜k");
+        // preedit は push_char が設定した "あk" のまま維持される
+        assert_eq!(s.preedit.text.to_str().unwrap(), "あk");
     }
 
     #[test]

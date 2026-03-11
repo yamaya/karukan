@@ -544,10 +544,12 @@ fn test_apply_live_candidate_with_pending_romaji() {
     s.push_char("k"); // romaji バッファに "k" 残存、input_buf は "あ" のまま
     assert_eq!(s.preedit(), "あk");
 
-    // source = "あ" (input_buf.text) — stale ではない
-    assert!(s.apply_live_candidate("亜", "あ"));
-    // preedit = "亜" + "k" (live + romaji buffer)
-    assert_eq!(s.preedit(), "亜k");
+    // romaji バッファに未確定子音がある場合は apply_live_candidate を無視する
+    // (auto-commit が pending 子音を失うのを防ぐ)
+    // FFI は 0 を返すべき（preedit.dirty がクリアされる）
+    assert!(!s.apply_live_candidate("亜", "あ"));
+    // preedit は "あk" のまま維持される
+    assert_eq!(s.preedit(), "あk");
 }
 
 #[test]
