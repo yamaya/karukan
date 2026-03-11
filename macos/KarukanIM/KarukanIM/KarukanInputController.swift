@@ -91,6 +91,10 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
     ///  直前の insertText がキャンセルされる app があるため）
     private var hasPreedit: Bool = false
 
+    /// 候補パネルの現在のカーソル位置（0-based）。
+    /// candidateSelectionChanged で更新し、末尾 Space 時の先頭ラップ判定に使う。
+    private var candidateCursor: Int = 0
+
     // -----------------------------------------------------------------------
     // MARK: - Lifecycle
     // -----------------------------------------------------------------------
@@ -208,13 +212,23 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
                 if event.modifierFlags.contains(.shift) {
                     panel.moveUp(nil)
                 } else {
-                    panel.moveDown(nil)
+                    let total = session.map { Int(karukan_get_candidate_count($0)) } ?? 0
+                    if candidateCursor >= total - 1 {
+                        panel.update() // 最終項目 → 先頭へラップ
+                    } else {
+                        panel.moveDown(nil)
+                    }
                 }
             case 48: // Tab / Shift-Tab
                 if event.modifierFlags.contains(.shift) {
                     panel.moveUp(nil)
                 } else {
-                    panel.moveDown(nil)
+                    let total = session.map { Int(karukan_get_candidate_count($0)) } ?? 0
+                    if candidateCursor >= total - 1 {
+                        panel.update() // 最終項目 → 先頭へラップ
+                    } else {
+                        panel.moveDown(nil)
+                    }
                 }
             case 125: // Down → 次候補
                 panel.moveDown(nil)
@@ -471,6 +485,15 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
                 replacementRange: NSRange(location: NSNotFound, length: 0)
             )
         }
+
+        // カーソル位置を記録（末尾ラップ判定用）
+        let count = Int(karukan_get_candidate_count(session))
+        for i in 0..<count {
+            if karukan_get_candidate(session, UInt32(i)).map({ String(cString: $0) }) == candidateText {
+                candidateCursor = i
+                break
+            }
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -544,6 +567,7 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
                 panel.show()
             }
         } else {
+            candidateCursor = 0
             panel.hide()
         }
     }

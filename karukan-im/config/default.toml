@@ -5,7 +5,7 @@
 # 変換ストラテジー: adaptive（動的切替）, light（軽量モデルのみ）, main（メインモデルのみ）
 strategy = "adaptive"
 # 変換候補数（Space押下時）
-num_candidates = 9
+num_candidates = 15
 # 周辺テキスト（カーソル左側の確定済みテキスト）を変換時のコンテキストとして使用する
 use_context = true
 # 変換API に渡す周辺テキストの最大文字数
@@ -13,7 +13,7 @@ max_context_length = 20
 # ビームサーチを使うトークン数の上限（それ以上はgreedy）
 short_input_threshold = 10
 # 短い入力のビーム幅
-beam_width = 3
+beam_width = 5
 # メインモデルの推論がこの時間(ms)を超えたらlight_modelに自動切替(0で無効)
 max_latency_ms = 80
 # Model variant id or GGUF path (uses registry default if unset)

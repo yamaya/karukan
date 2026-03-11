@@ -1457,9 +1457,9 @@ impl KarukanSession {
             }
         }
 
-        // 3. Neural model candidates (beam search, up to 9).
+        // 3. Neural model candidates (beam search, up to 15).
         if let Some(conv) = &self.converter {
-            match conv.convert(hiragana, "", 9) {
+            match conv.convert(hiragana, "", 15) {
                 Ok(model_cands) => {
                     for c in model_cands {
                         if !result.contains(&c) {
@@ -1474,7 +1474,7 @@ impl KarukanSession {
         // 4. System dictionary (fallback).
         if let Some(dict) = &self.dict {
             if let Some(lr) = dict.exact_match_search(hiragana) {
-                for c in lr.candidates.iter().take(5) {
+                for c in lr.candidates.iter().take(10) {
                     if !result.contains(&c.surface) {
                         result.push(c.surface.clone());
                     }
