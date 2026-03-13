@@ -79,7 +79,7 @@ static INIT_LOGGING: Once = Once::new();
 ///
 /// Routes logs to OSLog (visible in Console.app and `log stream`) so that
 /// Rust-side events (model loading, conversion, errors) appear alongside
-/// Swift's OSLog output under subsystem `com.example.karukan`.
+/// Swift's OSLog output under subsystem `io.github.yamaya.karukan`.
 ///
 /// Default level: `info` so that model download/load progress is visible.
 /// Override with `RUST_LOG` (e.g. `RUST_LOG=debug`).
@@ -87,7 +87,7 @@ pub(crate) fn init_logging() {
     INIT_LOGGING.call_once(|| {
         use tracing_subscriber::prelude::*;
         let oslog_layer = tracing_oslog::OsLogger::new(
-            "com.example.karukan",
+            "io.github.yamaya.karukan",
             "rust",
         );
         let filter = tracing_subscriber::EnvFilter::try_from_default_env()

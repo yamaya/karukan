@@ -349,7 +349,7 @@ TIS（Text Input Sources）への登録は以下の方法のいずれかで行�
 1. `Debug` または `Release`（引数で指定）のビルド成果物を DerivedData から検索する
 2. `~/Library/Input Methods/KarukanIM.app` が既に存在すれば削除する
 3. 新しい `KarukanIM.app` をコピーする
-4. `killall -9 InputMethodKit` で InputMethodKit を再起動する（初回は反映されない場合あり）
+4. `killall KarukanIMExtension` でIME拡張プロセスを再起動する（初回は反映されない場合あり）
 
 ### 7-3. システム設定での有効化
 

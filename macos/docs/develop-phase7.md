@@ -56,7 +56,7 @@ Linux 版と同一の優先度順。
 ### 利用手順（UI なし）
 
 1. `~/Library/Application Support/Karukan/user_dicts/` にTSVファイルを配置
-2. KarukanIM.app を再起動（ログアウト→ログイン、または `killall KarukanIM`）
+2. IME拡張プロセスを再起動（`killall KarukanIMExtension`）
 3. 辞書のエントリが変換候補に反映される
 
 ## 実装計画
