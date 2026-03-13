@@ -1,9 +1,11 @@
 [tasks.install]
 run = '''
 killall KarukanIM || true
+<<<<<<< HEAD
 sleep 1
 xcodebuild -scheme KarukanIM -configuration Release build | xcpretty
-sleep 5
+codesign --force --deep --sign - "$HOME/Library/Input Methods/KarukanIM.app"
+sleep 3
 # NOTE: `open -a` は使わない。Input Method アプリは LSUIElement であり、
 # LaunchServices 経由の起動が RBSRequestErrorDomain Code=5 で失敗するため。
 open ~/Library/Input\ Methods/KarukanIM.app || true
@@ -11,5 +13,5 @@ open ~/Library/Input\ Methods/KarukanIM.app || true
 
 [tasks.clean]
 run = '''
-xcodebuild -scheme KarukanIM clean | xcpretty
+xcodebuild -scheme KarukanIM clean
 '''
