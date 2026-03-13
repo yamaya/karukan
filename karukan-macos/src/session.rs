@@ -759,6 +759,7 @@ impl KarukanSession {
                     && self.live_candidate.is_some() =>
             {
                 self.do_conversion_impl(true);
+                self.show_segment_candidates();
                 true
             }
 
@@ -2073,20 +2074,20 @@ mod tests {
     fn test_space_triggers_conversion() {
         let mut s = KarukanSession::new();
         s.push_char('a'); // "あ"
+        // 1 回目の Space: BunsetsuConversion + 候補ロードまで実行
         s.push_key(KarukanKey::Space);
-        // 1 回目の Space: BunsetsuConversion に入るが候補は lazy（まだ空）
         assert!(!s.is_empty());
         assert!(
-            s.candidate_cache.items.is_empty(),
-            "lazy: candidates not loaded until second Space"
-        );
-        // 2 回目の Space: 選択文節の候補を lazy ロード
-        s.push_key(KarukanKey::Space);
-        assert!(
             !s.candidate_cache.items.is_empty(),
-            "after second Space, candidates are loaded"
+            "candidates loaded on first Space"
         );
         assert_eq!(s.candidate_cache.cursor, 0);
+        // 2 回目の Space: 次候補へ
+        let count = s.candidate_cache.items.len();
+        s.push_key(KarukanKey::Space);
+        if count > 1 {
+            assert_eq!(s.candidate_cache.cursor, 1);
+        }
     }
 
     #[test]
@@ -2119,14 +2120,12 @@ mod tests {
         "nihongo".chars().for_each(|c| {
             s.push_char(c);
         });
-        // 1 回目の Space: BunsetsuConversion へ（候補 lazy）
+        // 1 回目の Space: BunsetsuConversion + 候補ロード
         s.push_key(KarukanKey::Space);
-        assert!(s.candidate_cache.items.is_empty(), "lazy after first Space");
-        // 2 回目の Space: 候補 lazy ロード
-        s.push_key(KarukanKey::Space);
+        assert!(!s.candidate_cache.items.is_empty(), "candidates loaded on first Space");
         let count = s.candidate_cache.items.len();
         if count > 1 {
-            // 3 回目の Space: 次候補へ（cursor が進む）
+            // 2 回目の Space: 次候補へ（cursor が進む）
             s.push_key(KarukanKey::Space);
             assert_eq!(s.candidate_cache.cursor, 1);
         }
@@ -2136,9 +2135,7 @@ mod tests {
     fn test_select_candidate() {
         let mut s = KarukanSession::new();
         s.push_char('a');
-        // 1 回目の Space: BunsetsuConversion（候補 lazy）
-        s.push_key(KarukanKey::Space);
-        // 2 回目の Space: 候補 lazy ロード
+        // Space: BunsetsuConversion + 候補ロード
         s.push_key(KarukanKey::Space);
         let ok = s.select_candidate(0);
         assert!(ok);
@@ -2214,25 +2211,72 @@ mod tests {
     fn test_convert_hiragana_from_conversion() {
         let mut s = KarukanSession::new();
         s.push_char('a');
+<<<<<<< HEAD
         s.push_key(KarukanKey::Space); // enter BunsetsuConversion（候補 lazy）
         // BunsetsuConversion 中の Ctrl+J → 選択文節の display をひらがなに変更（確定しない）
+||||||| parent of 87e18fd (feat: ライブ変換で初回のSpace入力で候補メニューを出す)
+        s.push_key(KarukanKey::Space); // enter BunsetsuConversion（候補 lazy）
+        // lazy loading: ConvertHiragana は候補ロード不要で即動作
+=======
+        s.push_key(KarukanKey::Space); // enter BunsetsuConversion + candidates loaded
+        // BunsetsuConversion 中の ConvertHiragana: display をひらがなに戻す（コミットしない）
+>>>>>>> 87e18fd (feat: ライブ変換で初回のSpace入力で候補メニューを出す)
         s.push_key(KarukanKey::ConvertHiragana);
+<<<<<<< HEAD
         assert!(!s.commit.dirty);
         assert!(matches!(s.state, SessionState::BunsetsuConversion(_)));
         assert_eq!(s.preedit.text.to_str().unwrap(), "あ");
         assert!(s.candidate_cache.items.is_empty());
+||||||| parent of 87e18fd (feat: ライブ変換で初回のSpace入力で候補メニューを出す)
+        assert!(s.commit.dirty);
+        assert_eq!(s.commit.text.to_str().unwrap(), "あ");
+        assert!(s.is_empty());
+        assert!(s.candidate_cache.items.is_empty());
+=======
+        assert!(!s.commit.dirty, "ConvertHiragana in BunsetsuConversion should not commit");
+        assert_eq!(s.preedit.text.to_str().unwrap(), "あ");
+        assert!(!s.is_empty());
+        assert!(s.candidate_cache.items.is_empty());
+        // Return で確定
+        s.push_key(KarukanKey::Return);
+        assert!(s.commit.dirty);
+        assert_eq!(s.commit.text.to_str().unwrap(), "あ");
+        assert!(s.is_empty());
+>>>>>>> 87e18fd (feat: ライブ変換で初回のSpace入力で候補メニューを出す)
     }
 
     #[test]
     fn test_convert_katakana_from_conversion() {
         let mut s = KarukanSession::new();
         s.push_char('a');
+<<<<<<< HEAD
         s.push_key(KarukanKey::Space);
         // BunsetsuConversion 中の Ctrl+K → 選択文節の display をカタカナに変更（確定しない）
+||||||| parent of 87e18fd (feat: ライブ変換で初回のSpace入力で候補メニューを出す)
+        s.push_key(KarukanKey::Space);
+=======
+        s.push_key(KarukanKey::Space); // enter BunsetsuConversion + candidates loaded
+        // BunsetsuConversion 中の ConvertKatakana: display をカタカナに更新（コミットしない）
+>>>>>>> 87e18fd (feat: ライブ変換で初回のSpace入力で候補メニューを出す)
         s.push_key(KarukanKey::ConvertKatakana);
+<<<<<<< HEAD
         assert!(!s.commit.dirty);
         assert!(matches!(s.state, SessionState::BunsetsuConversion(_)));
         assert_eq!(s.preedit.text.to_str().unwrap(), "ア");
+||||||| parent of 87e18fd (feat: ライブ変換で初回のSpace入力で候補メニューを出す)
+        assert!(s.commit.dirty);
+        assert_eq!(s.commit.text.to_str().unwrap(), "ア");
+        assert!(s.is_empty());
+=======
+        assert!(!s.commit.dirty, "ConvertKatakana in BunsetsuConversion should not commit");
+        assert_eq!(s.preedit.text.to_str().unwrap(), "ア");
+        assert!(!s.is_empty());
+        // Return で確定
+        s.push_key(KarukanKey::Return);
+        assert!(s.commit.dirty);
+        assert_eq!(s.commit.text.to_str().unwrap(), "ア");
+        assert!(s.is_empty());
+>>>>>>> 87e18fd (feat: ライブ変換で初回のSpace入力で候補メニューを出す)
     }
 
     #[test]
