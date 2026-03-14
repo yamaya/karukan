@@ -840,34 +840,13 @@ impl KarukanSession {
             return false;
         }
         let chosen = conv.segments[sel].candidates[index].clone();
-        let hiragana = conv.segments[sel].hiragana.clone();
 
-        if let Some(cache) = &mut self.learning {
-            cache.record(&hiragana, &chosen);
-        }
-
-        // display を更新（コミットはしない）
+        // display を更新してから全文節をコミット。
+        // 学習記録は commit_bunsetsu_all が担う（display != hiragana の全文節を記録）。
         if let SessionState::BunsetsuConversion(ref mut conv) = self.state {
             conv.segments[sel].display = chosen;
         }
-
-        // 候補パネルを隠す
-        self.candidate_cache.items.clear();
-        self.candidate_cache.cursor = 0;
-
-        // preedit を全文節で再構築（キャレット = 選択文節末尾）
-        let (preedit_text, caret_bytes) =
-            if let SessionState::BunsetsuConversion(ref conv) = self.state {
-                let text: String = conv.segments.iter().map(|s| s.display.as_str()).collect();
-                let caret: usize =
-                    conv.segments[..=sel].iter().map(|s| s.display.len()).sum();
-                (text, caret)
-            } else {
-                (String::new(), 0)
-            };
-        self.preedit.text = CString::new(preedit_text.as_str()).unwrap_or_default();
-        self.preedit.caret_bytes = caret_bytes as u32;
-        self.preedit.dirty = true;
+        self.commit_bunsetsu_all();
         true
     }
 
@@ -2139,10 +2118,9 @@ mod tests {
         s.push_key(KarukanKey::Space);
         let ok = s.select_candidate(0);
         assert!(ok);
-        // BunsetsuConversion では select_candidate は display 更新のみ（コミットしない）。
-        // Return で全文節をコミットするのが正しいフロー。
-        assert!(!s.commit.dirty, "bunsetsu mode: select_candidate should NOT commit");
-        assert!(!s.is_empty(), "should remain in BunsetsuConversion after selecting");
+        // select_candidate は選択文節の display を更新し、全文節を即コミットする。
+        assert!(s.commit.dirty, "select_candidate should commit all segments");
+        assert!(s.is_empty(), "should be Empty after committing");
     }
 
     #[test]

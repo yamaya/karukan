@@ -824,8 +824,8 @@ fn test_select_candidate_in_range_commits_ffi() {
     // 2 回目の Space: 候補 lazy ロード
     s.push_key(KEY_SPACE);
 
-    // BunsetsuConversion では select_candidate は選択文節の display を更新するだけ。
-    // コミットは Return (commit_bunsetsu_all) で行う。
+    // BunsetsuConversion では select_candidate は選択文節のdisplayを更新するだけ。
+    // コミットは、Return (commit_bunsetsu_all) で行う。
     assert!(s.select_candidate(0));
     assert!(
         !s.has_commit(),
