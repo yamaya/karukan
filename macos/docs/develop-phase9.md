@@ -102,3 +102,23 @@ Return
     - Shift-Space で逆方向移動し、先頭で止まるか
     - Return / クリックで正しくコミットされるか
     - Left/Right で文節変更後に候補を開き直したとき先頭から始まるか
+
+## 未解決事項
+
+### 初回Space押下時の遅延（~50ms）
+
+**現象**: Composing状態でSpaceを押してから候補メニューが表示されるまでに一瞬待たされる。
+
+**原因**: `session.rs` の Composing × Space ハンドラが `do_conversion_impl`（~1ms）に加えて `show_segment_candidates`（LLM推論 ~50ms）を同期的に呼ぶため。
+
+```rust
+KarukanKey::Space if matches!(self.state, SessionState::Composing) => {
+    self.do_conversion_impl(false);   // ~1ms
+    self.show_segment_candidates();   // ~50ms ← ここでブロック
+    true
+}
+```
+
+「ライブ変換で初回のSpace入力で候補メニューを出す」コミット（8e265e4）で追加された挙動。
+
+**根本的な解決策**: LLM推論を非同期実行し、結果をコールバックで受け取る。ただし State 管理が複雑になるため現時点では未実装。
