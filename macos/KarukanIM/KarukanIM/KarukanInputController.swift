@@ -204,6 +204,7 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
         // 候補パネル表示中はキーイベントをパネルに委譲する。
         // interpretKeyEvents は Up/Down しか動かないため、Space/Tab は moveDown/Up で代替する。
         if let panel = candidatesPanel, panel.isVisible(), event.type == .keyDown {
+            logger.debug("handle: panel route keyCode=\(event.keyCode) flags=\(event.modifierFlags.rawValue)")
             // Ctrl+J/K/;: パネル表示中でも変換確定を優先する
             let panelFlags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             if panelFlags == [.control], let session,
@@ -558,7 +559,13 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
     override func activateServer(_ sender: Any!) {
         super.activateServer(sender)
         currentSender = sender
-        logger.info("activateServer")
+        // 候補パネルが前回アクティブ時のゾンビ状態で残っている場合に備えて強制 hide する。
+        // isVisible() が true のまま残ると全キーがパネルルートに飲み込まれて入力不能になる。
+        if let panel = candidatesPanel, panel.isVisible() {
+            logger.warning("activateServer: panel was visible on activate — forcing hide")
+            panel.hide()
+        }
+        logger.info("activateServer initialized=\(self.initialized)")
     }
 
     override func deactivateServer(_ sender: Any!) {
