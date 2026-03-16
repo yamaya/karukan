@@ -32,6 +32,10 @@ Build requires the Rust cdylib from `karukan-macos` crate (header at `../../karu
 
 This is a subdirectory of the karukan workspace. See the root `CLAUDE.md` for Rust crate architecture, engine design patterns, and cargo commands.
 
+## Allowed Tools
+
+- Read: *.swift,*.plist,*.md,*.rs,*.c,*.h,*.toml
+
 ## See Also
 
 @.claude/rules/architecture.md
