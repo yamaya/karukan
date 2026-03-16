@@ -10,6 +10,7 @@ use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
 use super::{KarukanSession, ffi_mut, ffi_ref};
+use crate::session::is_hiragana_char;
 
 // ---------------------------------------------------------------------------
 // Preedit
@@ -240,6 +241,10 @@ pub extern "C" fn karukan_convert_top1(
         // モデルに渡すと byte-level BPE デコードの副作用で制御文字が生成されることがある。
         // ASCII を含む入力は変換せず null を返す。
         if hiragana.chars().any(|c| c.is_ascii()) {
+            return std::ptr::null_mut();
+        }
+        // ひらがなを1文字も含まない入力（句読点・記号のみ等）は推論不要。
+        if !hiragana.chars().any(is_hiragana_char) {
             return std::ptr::null_mut();
         }
         match conv.convert(hiragana, "", 1) {

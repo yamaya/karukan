@@ -999,20 +999,19 @@ fn test_space_on_composing_does_not_commit_fullwidth_space_ffi() {
 }
 
 // ---------------------------------------------------------------------------
-// 句読点の即コミット（行頭 = Empty 状態）
+// 句読点・記号の preedit 入力（行頭 = Empty 状態）
 // ---------------------------------------------------------------------------
 
-/// Empty 状態で「?」を入力すると preedit を経由せず「？」が即コミットされる。
+/// Empty 状態で「?」を入力すると preedit に入る（即コミットしない）。
 #[test]
-fn test_question_mark_auto_commits_in_empty_state() {
+fn test_question_mark_enters_preedit_in_empty_state() {
     let s = TestSession::new();
     assert!(s.is_empty());
     s.push_char("?");
-    // preedit なし、即コミット
-    assert_eq!(s.preedit(), "");
-    assert!(s.has_commit(), "？ should be committed immediately");
-    assert_eq!(s.commit_text(), "？");
-    assert!(s.is_empty(), "state should return to Empty");
+    // preedit に「？」が入り、Composing 状態になる
+    assert_eq!(s.preedit(), "？");
+    assert!(!s.has_commit(), "should not commit immediately");
+    assert!(!s.is_empty(), "state should be Composing");
 }
 
 /// Composing 状態（ひらがなあり）で「?」を入力すると preedit に追記される。
@@ -1026,9 +1025,9 @@ fn test_question_mark_stays_in_preedit_after_hiragana() {
     assert_eq!(s.preedit(), "あ？");
 }
 
-/// Empty 状態で各種句読点が即コミットされる。
+/// Empty 状態で各種句読点が preedit に入る。
 #[test]
-fn test_punctuation_auto_commits_in_empty_state() {
+fn test_punctuation_enters_preedit_in_empty_state() {
     let pairs = [
         (".", "。"),
         (",", "、"),
@@ -1042,13 +1041,13 @@ fn test_punctuation_auto_commits_in_empty_state() {
         let s = TestSession::new();
         s.push_char(input);
         assert_eq!(
-            s.commit_text(),
+            s.preedit(),
             expected,
-            "input '{}' should auto-commit '{}'",
+            "input '{}' should enter preedit as '{}'",
             input,
             expected
         );
-        assert_eq!(s.preedit(), "", "preedit should be empty for '{}'", input);
-        assert!(s.is_empty(), "state should be Empty after '{}'", input);
+        assert!(!s.has_commit(), "should not commit for '{}'", input);
+        assert!(!s.is_empty(), "state should be Composing after '{}'", input);
     }
 }
