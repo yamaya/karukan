@@ -46,6 +46,10 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
     /// 推論が終わっていなければ新規タスクはスキップする（スレッド爆発防止）。
     private let liveConversionSemaphore = DispatchSemaphore(value: 1)
 
+    /// セマフォビジーでスキップされた場合の再トリガーフラグ。
+    /// 推論完了後にメインスレッドで再度 triggerLiveConversion を呼ぶ。
+    private var liveConversionNeedsRetrigger: Bool = false
+
     /// ライブ変換の自動コミット閾値（ひらがな文字数）。
     /// この文字数を超えた状態で推論が完了したら文節分割コミットを行い、preedit の肥大化を防ぐ。
     ///
@@ -538,6 +542,7 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
         consonantDelayTimer = nil
         // バックグラウンドのライブ変換結果を無効化（deactivate 後のクライアント操作を防ぐ）
         liveConversionGeneration &+= 1
+        liveConversionNeedsRetrigger = false
         candidatesPanel?.hide()
         currentSender = nil
         // karukan_session_init 未完了、またはセッション生成失敗の場合は session 関数に触らない。
@@ -784,14 +789,30 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
         // self を strong capture してセッションが解放されないようにする。
         // deinit は DispatchQueue.main で動くため、このクロージャが完了するまで
         // karukan_session_free は呼ばれない。
+        liveConversionNeedsRetrigger = false
+
         DispatchQueue.global(qos: .userInitiated).async { [self] in
             // 前の推論がまだ走っていれば今回はスキップ（同時推論を 1 件に制限）。
             // timeout: .now() = 非ブロッキング tryWait。取れなければ即 return。
             guard liveConversionSemaphore.wait(timeout: .now()) == .success else {
                 logger.debug("live: skipped (inference busy) gen=\(gen)")
+                // 推論完了後に最新状態で再トリガーするようフラグを立てる。
+                // メインスレッドからのみ書き込まれるが、読み取りはバックグラウンドから
+                // 行われないため排他不要。
+                DispatchQueue.main.async { [weak self] in
+                    self?.liveConversionNeedsRetrigger = true
+                }
                 return
             }
-            defer { liveConversionSemaphore.signal() }
+            defer {
+                liveConversionSemaphore.signal()
+                // 推論完了後: スキップされたトリガーがあれば最新状態で再実行する。
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.liveConversionNeedsRetrigger else { return }
+                    self.liveConversionNeedsRetrigger = false
+                    self.triggerLiveConversion(sender: self.currentSender ?? self.client())
+                }
+            }
 
             // Arc<KanaKanjiConverter> のみアクセス（Send+Sync）— 全体の変換
             let t0 = CFAbsoluteTimeGetCurrent()
