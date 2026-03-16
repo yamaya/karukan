@@ -21,6 +21,12 @@
 	</dict>
 	<key>NSPrincipalClass</key>
 	<string>KarukanIMExtension.KarukanInputController</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleGetInfoString</key>
+	<string>$(MARKETING_VERSION) ($(CURRENT_PROJECT_VERSION))</string>
 	<key>ComponentCategory</key>
 	<string>TIInputSourceTypeKeyboardInputMethodWithDictionary</string>
 	<key>tsInputMethodIconFileKey</key>

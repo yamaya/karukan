@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Conversation Guidelines
+
+Always respond in Japanese.
+
 ## What This Is
 
 KarukanIM is the macOS Input Method (IME) host application for the karukan Japanese input system. It bridges the Rust karukan-engine to macOS via IMKit, providing romaji-to-hiragana conversion, neural kana-kanji conversion, and live (inline) conversion.
@@ -32,3 +36,4 @@ This is a subdirectory of the karukan workspace. See the root `CLAUDE.md` for Ru
 
 @.claude/rules/architecture.md
 @.claude/rules/keybindings.md
+@.claude/rules/versioning.md

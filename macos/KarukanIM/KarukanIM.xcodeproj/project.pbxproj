@@ -196,6 +196,7 @@
 				5490CA622F4ECC0200990600 /* Resources */,
 				5490CA9E2F4ECF7D00990600 /* Embed App Extensions */,
 				54D0A00B2F530000003263AA /* Embed KarukanPreferences */,
+				54E0A0012F700001003263AA /* Set Build Number */,
 				5436F6032F4F0000003263AA /* Install to Input Methods */,
 			);
 			buildRules = (
@@ -267,6 +268,7 @@
 				5490CA8E2F4ECF7D00990600 /* Sources */,
 				5490CA8F2F4ECF7D00990600 /* Frameworks */,
 				5490CA902F4ECF7D00990600 /* Resources */,
+				54E0A0012F700001003263AA /* Set Build Number */,
 			);
 			buildRules = (
 			);
@@ -420,6 +422,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "#!/usr/bin/env bash\nset -euo pipefail\n\n# ビルド完了後に ~/Library/Input Methods/ にインストール\nINPUT_METHODS_DIR=\"$HOME/Library/Input Methods\"\nmkdir -p \"$INPUT_METHODS_DIR\"\nrm -rf \"$INPUT_METHODS_DIR/${PRODUCT_NAME}.app\"\ncp -R \"${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.app\" \"$INPUT_METHODS_DIR/\"\necho \"\\u2713 Installed to $INPUT_METHODS_DIR/${PRODUCT_NAME}.app\"\n";
+		};
+		54E0A0012F700001003263AA /* Set Build Number */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Set Build Number";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "#!/usr/bin/env bash\nset -euo pipefail\n\nif [ \"${CONFIGURATION}\" = \"Release\" ]; then\n    REPO=\"${SRCROOT}/../../\"\n    BUILD_NUMBER=$(git -C \"${REPO}\" rev-list --count HEAD)\n    PLIST=\"${BUILT_PRODUCTS_DIR}/${INFOPLIST_PATH}\"\n    /usr/libexec/PlistBuddy -c \"Set :CFBundleVersion ${BUILD_NUMBER}\" \"${PLIST}\"\n    /usr/libexec/PlistBuddy -c \"Set :CFBundleGetInfoString ${MARKETING_VERSION} (${BUILD_NUMBER})\" \"${PLIST}\"\n    echo \"\\u2713 CFBundleVersion \\u2192 ${BUILD_NUMBER}\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

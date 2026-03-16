@@ -52,10 +52,12 @@
 	<key>LSUIElement</key>
 	<true/>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleGetInfoString</key>
+	<string>$(MARKETING_VERSION) ($(CURRENT_PROJECT_VERSION))</string>
 	<key>tsInputMethodIconFileKey</key>
 	<string>Hiragana.tiff</string>
-	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
 </dict>
 </plist>
