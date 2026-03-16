@@ -39,6 +39,9 @@ final class KarukanInputController: IMKInputController {
     /// 直前の insertText がキャンセルされる app があるため。
     private var hasPreedit: Bool = false
 
+    /// 初期化完了前に到着したキーイベントのバッファ。
+    private var pendingEvents: [(event: NSEvent, sender: Any)] = []
+
     // -----------------------------------------------------------------------
     // MARK: - Lifecycle
     // -----------------------------------------------------------------------
@@ -54,15 +57,23 @@ final class KarukanInputController: IMKInputController {
         session = ptr
         logger.debug("session created: \(String(describing: ptr))")
 
-        // リソースロード（辞書・学習キャッシュ。Phase 3: モデル追加予定）
-        // Phase 3 でモデルロード（数秒〜数十秒）が追加されるため、
-        // Phase 2 の時点からバックグラウンドスレッドで呼ぶ設計にしておく。
+        // リソースロード（辞書・学習キャッシュ・モデル）
         let capturedSession = ptr
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        if karukan_is_prewarmed() != 0 {
+            // プリウォーム済み: 同期実行（辞書・学習キャッシュの I/O のみ）
             let ret = karukan_session_init(capturedSession)
-            logger.info("karukan_session_init returned: \(ret)")
-            DispatchQueue.main.async {
-                self?.initialized = true
+            logger.info("karukan_session_init (sync, prewarmed) returned: \(ret)")
+            initialized = true
+        } else {
+            // プリウォーム未完了: バックグラウンドで初期化 + リプレイ
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let ret = karukan_session_init(capturedSession)
+                logger.info("karukan_session_init (async) returned: \(ret)")
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.initialized = true
+                    self.replayPendingEvents()
+                }
             }
         }
     }
@@ -79,8 +90,16 @@ final class KarukanInputController: IMKInputController {
     // -----------------------------------------------------------------------
 
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
-        // 初期化完了前はすべてスルー
-        guard initialized, let session else { return false }
+        guard let session else { return false }
+
+        // 初期化完了前: keyDown イベントをバッファして consumed を返す。
+        if !initialized {
+            if event.type == .keyDown, let sender {
+                pendingEvents.append((event: event, sender: sender))
+                logger.debug("buffered keyDown (pending init): keyCode=\(event.keyCode)")
+            }
+            return true
+        }
 
         // KeyDown のみ処理
         guard event.type == .keyDown else { return false }
@@ -150,6 +169,16 @@ final class KarukanInputController: IMKInputController {
     // -----------------------------------------------------------------------
     // MARK: - Private Helpers
     // -----------------------------------------------------------------------
+
+    /// 初期化完了前にバッファしたキーイベントをリプレイする。
+    private func replayPendingEvents() {
+        let events = pendingEvents
+        pendingEvents.removeAll()
+        logger.info("replaying \(events.count) buffered key events")
+        for pending in events {
+            _ = handle(pending.event, client: pending.sender)
+        }
+    }
 
     /// Rust 側の状態（preedit / commit）を IMK クライアントに反映する。
     ///

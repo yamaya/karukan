@@ -8,6 +8,9 @@
 
 import SwiftUI
 import InputMethodKit
+import OSLog
+
+private let logger = Logger(subsystem: "io.github.yamaya.karukan", category: "App")
 
 @main
 struct KarukanIMApp: App {
@@ -26,6 +29,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var server: IMKServer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // KanaKanjiConverter をバックグラウンドでプリロードする。
+        // これにより後続の karukan_session_init() が高速化される
+        // （辞書・学習キャッシュの読み込みのみ）。
+        DispatchQueue.global(qos: .userInitiated).async {
+            let ret = karukan_prewarm()
+            logger.info("karukan_prewarm returned: \(ret)")
+        }
+
         // IMKServer を起動。InputMethodConnectionName と一致する名前を使う。
         server = IMKServer(
             name: "io.github.yamaya.inputmethod.KarukanIM_Connection",

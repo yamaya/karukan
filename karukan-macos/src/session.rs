@@ -32,7 +32,7 @@ use karukan_engine::{
 ///
 /// `OnceLock` provides lock-free reads after the first init. `Arc` lets every
 /// session hold a cheap reference without copying the model.
-static SHARED_CONVERTER: OnceLock<Arc<KanaKanjiConverter>> = OnceLock::new();
+pub(crate) static SHARED_CONVERTER: OnceLock<Arc<KanaKanjiConverter>> = OnceLock::new();
 
 // ---------------------------------------------------------------------------
 // InputBuffer

@@ -1,9 +1,11 @@
-//! Session lifecycle: `karukan_session_new`, `karukan_session_init`, `karukan_session_free`.
+//! Session lifecycle: `karukan_session_new`, `karukan_session_init`, `karukan_session_free`,
+//! `karukan_prewarm`, `karukan_is_prewarmed`.
 
 use std::ffi::c_int;
 use std::panic::AssertUnwindSafe;
 
 use super::{KarukanSession, ffi_mut, init_logging};
+use crate::session::SHARED_CONVERTER;
 
 /// Allocate a new `KarukanSession` and return an owning raw pointer.
 ///
@@ -40,6 +42,63 @@ pub extern "C" fn karukan_session_init(session: *mut KarukanSession) -> c_int {
         0
     }))
     .unwrap_or(-1)
+}
+
+/// Pre-load the shared `KanaKanjiConverter` (model + backend).
+///
+/// Call from a background thread at application launch.  If the model is
+/// already loaded this is a cheap no-op.  Once complete,
+/// [`karukan_session_init`] becomes fast because the model is shared via
+/// `Arc` and only dictionary / learning-cache I/O remains.
+///
+/// Returns `0` on success, `-1` on error (e.g. model download failed).
+#[unsafe(no_mangle)]
+pub extern "C" fn karukan_prewarm() -> c_int {
+    std::panic::catch_unwind(|| {
+        init_logging();
+
+        // If already loaded, nothing to do.
+        if SHARED_CONVERTER.get().is_some() {
+            return 0;
+        }
+
+        use karukan_engine::kanji::model_config::registry;
+        use karukan_engine::{Backend, KanaKanjiConverter};
+        use std::sync::Arc;
+
+        let result = registry()
+            .default_variant()
+            .ok_or_else(|| "no default variant in models.toml".to_string())
+            .and_then(|(family, variant)| {
+                Backend::from_variant(family, variant).map_err(|e| e.to_string())
+            })
+            .and_then(|backend| KanaKanjiConverter::new(backend).map_err(|e| e.to_string()))
+            .map(Arc::new);
+
+        match result {
+            Ok(arc) => {
+                let _ = SHARED_CONVERTER.set(arc);
+                tracing::info!("karukan_prewarm: KanaKanjiConverter loaded");
+                0
+            }
+            Err(e) => {
+                tracing::warn!("karukan_prewarm failed: {}", e);
+                -1
+            }
+        }
+    })
+    .unwrap_or(-1)
+}
+
+/// Check whether the shared `KanaKanjiConverter` has been pre-loaded.
+///
+/// Returns `1` if [`karukan_prewarm`] (or a prior [`karukan_session_init`])
+/// has successfully loaded the model, `0` otherwise.
+///
+/// This is a lock-free read and safe to call from any thread.
+#[unsafe(no_mangle)]
+pub extern "C" fn karukan_is_prewarmed() -> c_int {
+    if SHARED_CONVERTER.get().is_some() { 1 } else { 0 }
 }
 
 /// Free a `KarukanSession` previously returned by [`karukan_session_new`].

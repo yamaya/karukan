@@ -95,6 +95,10 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
     /// candidateSelectionChanged で更新し、末尾 Space 時の先頭ラップ判定に使う。
     private var candidateCursor: Int = 0
 
+    /// 初期化完了前に到着したキーイベントのバッファ。
+    /// `initialized` が true になった時点でリプレイされる。
+    private var pendingEvents: [(event: NSEvent, sender: Any)] = []
+
     // -----------------------------------------------------------------------
     // MARK: - Lifecycle
     // -----------------------------------------------------------------------
@@ -126,14 +130,26 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
         logger.info("settings on init — liveConversion=\(self.isLiveConversionEnabled) consonantDelay=\(self.consonantDelaySec)s autoCommitMax=\(self.autoCommitMaxChars)")
 
         // リソースロード（辞書・学習キャッシュ・モデル）
-        // [self] strong capture: karukan_session_init 完了前に deinit/karukan_session_free が
-        // 走るとフリーしたポインタにアクセスして落ちるため、init 完了まで self を生かし続ける。
         let capturedSession = ptr
-        DispatchQueue.global(qos: .userInitiated).async { [self] in
+        if karukan_is_prewarmed() != 0 {
+            // プリウォーム済み: モデルは Arc::clone のみ。辞書・学習キャッシュの I/O だけなので
+            // メインスレッドで同期実行しても十分高速（数十 ms）。
+            // これにより初期化完了前のキー取りこぼしを完全に回避できる。
             let ret = karukan_session_init(capturedSession)
-            logger.info("karukan_session_init returned: \(ret)")
-            DispatchQueue.main.async { [weak self] in
-                self?.initialized = true
+            logger.info("karukan_session_init (sync, prewarmed) returned: \(ret)")
+            initialized = true
+        } else {
+            // プリウォーム未完了: バックグラウンドで初期化し、完了後にバッファ済みイベントをリプレイする。
+            // [self] strong capture: karukan_session_init 完了前に deinit/karukan_session_free が
+            // 走るとフリーしたポインタにアクセスして落ちるため、init 完了まで self を生かし続ける。
+            DispatchQueue.global(qos: .userInitiated).async { [self] in
+                let ret = karukan_session_init(capturedSession)
+                logger.info("karukan_session_init (async) returned: \(ret)")
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.initialized = true
+                    self.replayPendingEvents()
+                }
             }
         }
     }
@@ -240,7 +256,17 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
             return true
         }
 
-        guard initialized, let session else { return false }
+        guard let session else { return false }
+
+        // 初期化完了前: keyDown イベントをバッファして consumed を返す。
+        // 初期化完了後にリプレイされる。
+        if !initialized {
+            if event.type == .keyDown, let sender {
+                pendingEvents.append((event: event, sender: sender))
+                logger.debug("buffered keyDown (pending init): keyCode=\(event.keyCode)")
+            }
+            return true
+        }
 
         guard event.type == .keyDown else { return false }
 
@@ -555,6 +581,17 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
     // -----------------------------------------------------------------------
     // MARK: - Private Helpers
     // -----------------------------------------------------------------------
+
+    /// 初期化完了前にバッファしたキーイベントをリプレイする。
+    /// メインスレッドから呼ぶこと。
+    private func replayPendingEvents() {
+        let events = pendingEvents
+        pendingEvents.removeAll()
+        logger.info("replaying \(events.count) buffered key events")
+        for pending in events {
+            _ = handle(pending.event, client: pending.sender)
+        }
+    }
 
     /// 候補数に応じてパネルを表示 / 非表示する。
     /// パネルの選択はパネル自身が管理し、candidateSelectionChanged で preedit に反映する。

@@ -80,6 +80,27 @@ KarukanSession* karukan_session_new(void);
 int karukan_session_init(KarukanSession* session);
 
 /**
+ * Pre-load the shared KanaKanjiConverter (model + backend).
+ *
+ * Call from a background thread at application launch.  If the model is
+ * already loaded this is a cheap no-op.  Once complete,
+ * karukan_session_init() becomes fast because only dictionary / learning-cache
+ * I/O remains.
+ *
+ * Returns 0 on success, -1 on error.
+ */
+int karukan_prewarm(void);
+
+/**
+ * Check whether the shared KanaKanjiConverter has been pre-loaded.
+ *
+ * Returns 1 if karukan_prewarm() (or a prior karukan_session_init()) has
+ * successfully loaded the model, 0 otherwise.
+ * Lock-free; safe to call from any thread.
+ */
+int karukan_is_prewarmed(void);
+
+/**
  * Free a KarukanSession and persist the learning cache.
  *
  * Passing NULL is a no-op.
