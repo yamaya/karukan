@@ -1,7 +1,6 @@
 [tasks.install]
 run = '''
 killall KarukanIM || true
-<<<<<<< HEAD
 sleep 1
 xcodebuild -scheme KarukanIM -configuration Release build | xcpretty
 codesign --force --deep --sign - "$HOME/Library/Input Methods/KarukanIM.app"
