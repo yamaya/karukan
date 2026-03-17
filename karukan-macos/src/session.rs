@@ -600,11 +600,16 @@ impl KarukanSession {
         let _event = self.romaji.push(ch);
 
         // Append only the newly produced hiragana to input_buf.
+        // ASCII数字は全角数字に変換する（ロマジコンバータはルールがなくPassThroughする）。
         let new_hiragana: String = self
             .romaji
             .output()
             .chars()
             .skip(prev_output_chars)
+            .map(|c| match c {
+                '0'..='9' => char::from_u32(c as u32 - '0' as u32 + '０' as u32).unwrap(),
+                _ => c,
+            })
             .collect();
         if !new_hiragana.is_empty() {
             self.input_buf.insert(&new_hiragana);

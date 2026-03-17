@@ -1051,3 +1051,38 @@ fn test_punctuation_enters_preedit_in_empty_state() {
         assert!(!s.is_empty(), "state should be Composing after '{}'", input);
     }
 }
+
+// ---------------------------------------------------------------------------
+// 全角数字の preedit 入力
+// ---------------------------------------------------------------------------
+
+/// Empty 状態で数字を入力すると全角数字として preedit に入る。
+#[test]
+fn test_digits_enter_preedit_as_fullwidth() {
+    let pairs = [
+        ("0", "０"), ("1", "１"), ("2", "２"), ("3", "３"), ("4", "４"),
+        ("5", "５"), ("6", "６"), ("7", "７"), ("8", "８"), ("9", "９"),
+    ];
+    for (input, expected) in pairs {
+        let s = TestSession::new();
+        s.push_char(input);
+        assert_eq!(
+            s.preedit(),
+            expected,
+            "input '{}' should enter preedit as '{}'",
+            input,
+            expected
+        );
+        assert!(!s.has_commit(), "should not commit for '{}'", input);
+        assert!(!s.is_empty(), "state should be Composing after '{}'", input);
+    }
+}
+
+/// ひらがなの後に数字を入力すると全角数字が preedit に追記される。
+#[test]
+fn test_digit_after_hiragana_in_preedit() {
+    let s = TestSession::new();
+    s.push_char("a"); // "あ"
+    s.push_char("1");
+    assert_eq!(s.preedit(), "あ１");
+}
