@@ -25,7 +25,7 @@
 
 ### ラップの仕組み
 
-```
+```text
 Space（最終項目）
   → panel.update()
   → IMKCandidates が candidates() を再取得し、カーソルを先頭にリセット
@@ -56,6 +56,7 @@ conv.convert(hiragana, "", 9)  →  conv.convert(hiragana, "", 15)
 ### `macos/KarukanIM/KarukanIM/KarukanInputController.swift`
 
 **プロパティ追加**:
+
 ```swift
 /// 候補パネルの現在のカーソル位置（0-based）。
 /// candidateSelectionChanged で更新し、末尾ラップ判定に使う。
@@ -72,7 +73,7 @@ private var candidateCursor: Int = 0
 
 ## データフロー
 
-```
+```text
 Space × 2
   → Rust: collect_candidates → 最大25件をキャッシュ
   → panel.show() / panel.update()
@@ -95,9 +96,9 @@ Return
 1. `cargo build -p karukan-macos --release`
 2. Xcode で KarukanIM をリビルド・インストール
 3. 動作確認:
-   - Space × 2 → 10件以上の候補が表示されるか
-   - Space 連打で1件ずつ下にスクロールするか
-   - 最終候補でSpace → 先頭候補に戻るか（ラップ）
-   - Shift-Space で逆方向移動し、先頭で止まるか
-   - Return / クリックで正しくコミットされるか
-   - Left/Right で文節変更後に候補を開き直したとき先頭から始まるか
+    - Space × 2 → 10件以上の候補が表示されるか
+    - Space 連打で1件ずつ下にスクロールするか
+    - 最終候補でSpace → 先頭候補に戻るか（ラップ）
+    - Shift-Space で逆方向移動し、先頭で止まるか
+    - Return / クリックで正しくコミットされるか
+    - Left/Right で文節変更後に候補を開き直したとき先頭から始まるか

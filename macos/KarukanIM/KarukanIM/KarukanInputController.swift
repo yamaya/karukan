@@ -29,8 +29,13 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
     /// バックグラウンドで init 後、メインスレッドで true に設定される。
     private var initialized: Bool = false
 
-    /// 候補パネル（IMKServer と 1:1 で生成）。
-    private var candidatesPanel: IMKCandidates?
+    /// 候補パネル（IMKServer と 1:1 で共有）。
+    /// static に保持して個別コントローラの dealloc で解放されないようにする。
+    /// IMKit の _IMKServerLegacy が内部で unretained 参照を持つため、
+    /// インスタンスごとに解放するとサーバ側の参照がダングリングし
+    /// deactivateServer → isVisible で EXC_BAD_ACCESS を起こす。
+    private static var sharedCandidatesPanel: IMKCandidates?
+    private var candidatesPanel: IMKCandidates? { Self.sharedCandidatesPanel }
 
     /// 直近の有効な入力クライアント。
     /// パネルクリック時は client() が無効になるため、
@@ -121,11 +126,13 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
         session = ptr
         logger.debug("session created: \(String(describing: ptr))")
 
-        // 候補パネルを生成（スクロールリスト形式）
-        candidatesPanel = IMKCandidates(
-            server: server,
-            panelType: kIMKSingleColumnScrollingCandidatePanel
-        )
+        // 候補パネルを生成（スクロールリスト形式・サーバと 1:1 で共有）
+        if Self.sharedCandidatesPanel == nil {
+            Self.sharedCandidatesPanel = IMKCandidates(
+                server: server,
+                panelType: kIMKSingleColumnScrollingCandidatePanel
+            )
+        }
         // スリープ前に候補パネルを閉じる。
         // スリープでウィンドウサーバーとの接続が切れると、復帰後の
         // deactivateServer で IMKit がパネルに isVisible を送った際に
