@@ -126,6 +126,16 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
             server: server,
             panelType: kIMKSingleColumnScrollingCandidatePanel
         )
+        // スリープ前に候補パネルを閉じる。
+        // スリープでウィンドウサーバーとの接続が切れると、復帰後の
+        // deactivateServer で IMKit がパネルに isVisible を送った際に
+        // 既に無効なメモリへアクセスしてクラッシュするのを防ぐ。
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(handleWillSleep),
+            name: NSWorkspace.willSleepNotification,
+            object: nil
+        )
 
         // 入力メニューを一度だけ構築（target の weak 参照が切れないよう self が生きている間に固定）
         setupMenu()
@@ -159,9 +169,17 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
     }
 
     deinit {
+        NSWorkspace.shared.notificationCenter.removeObserver(self)
         guard let session else { return }
         karukan_session_free(session)
         logger.debug("session freed")
+    }
+
+    /// スリープ前に候補パネルを閉じる。
+    /// スリープでウィンドウサーバーとの接続が切れる前にパネルを非表示にしておく。
+    @objc private func handleWillSleep(_ notification: Notification) {
+        logger.info("willSleep — dismissing candidates panel")
+        candidatesPanel?.hide()
     }
 
     // -----------------------------------------------------------------------
@@ -543,12 +561,12 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
         // バックグラウンドのライブ変換結果を無効化（deactivate 後のクライアント操作を防ぐ）
         liveConversionGeneration &+= 1
         liveConversionNeedsRetrigger = false
-        candidatesPanel?.hide()
         currentSender = nil
         // karukan_session_init 未完了、またはセッション生成失敗の場合は session 関数に触らない。
         // 未初期化の KarukanSession にアクセスするとバックグラウンドスレッドと競合してクラッシュする。
         guard initialized, let session else {
             super.deactivateServer(sender)
+            candidatesPanel?.hide()
             return
         }
         // sessionFinished 経由だと sender が無効な場合があるため、
@@ -569,7 +587,11 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
             hasPreedit = false
         }
         karukan_save_learning(session)
+        // super を先に呼んで IMKit 内部の deactivation を完了させる。
+        // candidatesPanel?.hide() を super の前に呼ぶと、IMKit 内部のパネル参照と
+        // 実際のパネル状態が食い違い、isVisible で無効なメモリにアクセスする場合がある。
         super.deactivateServer(sender)
+        candidatesPanel?.hide()
     }
 
     override func commitComposition(_ sender: Any!) {
