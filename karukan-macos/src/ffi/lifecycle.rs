@@ -25,15 +25,14 @@ pub extern "C" fn karukan_session_new() -> *mut KarukanSession {
 
 /// Load resources for the session (system dictionary, learning cache).
 ///
-/// Phase 1 loads only the system dictionary and learning cache.
-/// Phase 3 will add model loading (which may take several seconds on first
-/// run while downloading from HuggingFace).
+/// Loads the system dictionary, user dictionaries, and learning cache.
+/// Missing or unreadable resources are silently skipped (logged as warnings)
+/// — the session remains usable without them.
 ///
 /// **Call from a background thread** so that the main thread is not blocked.
-/// (In Phase 1 this is instant if the files do not exist, but the calling
-/// convention is established here so Swift does not need to change in Phase 3.)
 ///
-/// Returns `0` on success, `-1` on error.
+/// Returns `0` on success (including when some resources are missing),
+/// `-1` only on panic (null pointer, etc.).
 #[unsafe(no_mangle)]
 pub extern "C" fn karukan_session_init(session: *mut KarukanSession) -> c_int {
     std::panic::catch_unwind(AssertUnwindSafe(|| {

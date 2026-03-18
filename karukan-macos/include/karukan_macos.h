@@ -69,13 +69,13 @@ typedef enum {
 KarukanSession* karukan_session_new(void);
 
 /**
- * Load resources: system dictionary, learning cache.
+ * Load resources: system dictionary, user dictionaries, learning cache.
  *
- * Phase 3 will add model loading here.  Call from a background thread
- * (DispatchQueue.global().async) to avoid blocking the main thread.
+ * Call from a background thread (DispatchQueue.global().async) to avoid
+ * blocking the main thread.
  *
- * Returns 0 on success, -1 on error.
- * Missing resource files are silently skipped (non-fatal).
+ * Returns 0 on success (including when some resources are missing),
+ * -1 only on panic (null pointer, etc.).
  */
 int karukan_session_init(KarukanSession* session);
 
