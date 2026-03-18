@@ -55,13 +55,6 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
     /// 推論完了後にメインスレッドで再度 triggerLiveConversion を呼ぶ。
     private var liveConversionNeedsRetrigger: Bool = false
 
-    /// ライブ変換の自動コミット閾値（ひらがな文字数）。
-    /// この文字数を超えた状態で推論が完了したら文節分割コミットを行い、preedit の肥大化を防ぐ。
-    ///
-    /// 実測値（M シリーズ Mac、2026-02-26）:
-    ///   1-5 chars: ~30-45ms  /  6-10: ~35-55ms  /  11-15: ~45-72ms  /  16: 58ms
-    /// 線形外挿: 30 chars ≒ 90ms — 十分許容範囲内。
-    /// Intel Mac では 3-5 倍になる可能性があるため 30 で余裕を持たせている。
     /// 子音 pending 遅延表示用タイマー。
     /// タイマー発火前に次のキーが来ればキャンセルされ、ちらつきを防ぐ。
     private var consonantDelayTimer: Timer?
@@ -71,7 +64,13 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
         SettingStore.defaults.double(forKey: SettingStore.consonantDelaySecKey)
     }
 
-    /// 自動コミット閾値（文字数）。SettingStore から読み取る。
+    /// ライブ変換の自動コミット閾値（ひらがな文字数）。
+    /// この文字数を超えた状態で推論が完了したら文節分割コミットを行い、preedit の肥大化を防ぐ。
+    ///
+    /// 実測値（M シリーズ Mac、2026-02-26）:
+    ///   1-5 chars: ~30-45ms  /  6-10: ~35-55ms  /  11-15: ~45-72ms  /  16: 58ms
+    /// 線形外挿: 30 chars ≒ 90ms — 十分許容範囲内。
+    /// Intel Mac では 3-5 倍になる可能性があるため 30 で余裕を持たせている。
     private var autoCommitMaxChars: Int {
         let v = SettingStore.defaults.integer(forKey: SettingStore.autoCommitMaxCharsKey)
         return v > 0 ? v : 30

@@ -66,10 +66,12 @@ final class KarukanInputController: IMKInputController {
             initialized = true
         } else {
             // プリウォーム未完了: バックグラウンドで初期化 + リプレイ
-            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // [self] strong capture: karukan_session_init 完了前に deinit/karukan_session_free が
+            // 走るとフリーしたポインタにアクセスして落ちるため、init 完了まで self を生かし続ける。
+            DispatchQueue.global(qos: .userInitiated).async { [self] in
                 let ret = karukan_session_init(capturedSession)
                 logger.info("karukan_session_init (async) returned: \(ret)")
-                DispatchQueue.main.async {
+                DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
                     self.initialized = true
                     self.replayPendingEvents()
@@ -160,10 +162,13 @@ final class KarukanInputController: IMKInputController {
     }
 
     override func commitComposition(_ sender: Any!) {
-        // IMK が強制コミットを要求した場合
         logger.info("commitComposition")
         forceCommit(client: sender)
-        super.commitComposition(sender)
+        // super.commitComposition は呼ばない:
+        // macOS は 英数/かなキー切替時に commitComposition を自動呼び出しする。
+        // Apple 基底クラスは handle() で消費したキー（char = 0x10 DLE）を
+        // 内部バッファに保持し、commitComposition 時に client へ flush する。
+        // forceCommit で必要なテキストは自前で挿入済みのため super は不要かつ有害。
     }
 
     // -----------------------------------------------------------------------
