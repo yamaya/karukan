@@ -863,6 +863,12 @@ impl KarukanSession {
     /// 学習キャッシュに記録する（karukan-im の commit_composing と同じ動作）。
     fn do_commit(&mut self) {
         self.convert_preview = None;
+
+        // flush 前の input_buf.text を保存。live_candidate_source との比較に使う。
+        // flush で子音が pass through されると input_buf.text が変化し、
+        // live_candidate_source と不一致になって live が不採用 → ASCII 混在コミットになるため。
+        let pre_flush_text = self.input_buf.text.clone();
+
         let prev_len = self.romaji.output().chars().count();
         let _ = self.romaji.flush();
         let flushed: String = self.romaji.output().chars().skip(prev_len).collect();
@@ -871,13 +877,12 @@ impl KarukanSession {
         }
 
         let committed = if let Some(live) = self.live_candidate.take() {
-            // live_candidate_source が現在の input_buf.text と一致する場合のみ採用。
+            // live_candidate_source が flush 前の input_buf.text と一致する場合のみ採用。
             // 'k' 押下時（composing="なでし"）に生成された live_candidate が
             // 'o' 入力後（composing="なでしこ"）にコミットされるバグを防ぐ。
-            if self.live_candidate_source == self.input_buf.text {
-                let hiragana = self.input_buf.text.clone();
+            if self.live_candidate_source == pre_flush_text {
                 if let Some(cache) = &mut self.learning {
-                    cache.record(&hiragana, &live);
+                    cache.record(&pre_flush_text, &live);
                 }
                 live
             } else {
@@ -2536,6 +2541,33 @@ mod tests {
         assert!(s.commit.dirty);
         assert_eq!(s.commit.text.to_str().unwrap(), "愛憂");
         assert!(s.is_empty());
+    }
+
+    #[test]
+    fn test_commit_live_candidate_with_pending_consonant() {
+        // 再現: ライブ変換適用済み → 子音 pending → Return
+        // 期待: ライブ変換結果 + pending 子音のひらがな化、ASCII 混在しないこと
+        let mut s = KarukanSession::new();
+        "aiu".chars().for_each(|c| {
+            s.push_char(c);
+        });
+        // ライブ変換適用（source 一致）
+        s.apply_live_candidate("愛憂", "あいう");
+        assert_eq!(s.live_candidate.as_deref(), Some("愛憂"));
+
+        // 子音 'k' を追加（romaji buffer に pending）
+        s.push_char('k');
+        assert!(!s.romaji.buffer().is_empty(), "romaji buffer should have 'k'");
+
+        // Return でコミット → ASCII 'k' が混入しないことを確認
+        s.push_key(KarukanKey::Return);
+        assert!(s.commit.dirty);
+        let committed = s.commit.text.to_str().unwrap();
+        assert!(
+            !committed.contains('k'),
+            "committed text should not contain ASCII 'k', got: '{}'",
+            committed
+        );
     }
 
     #[test]
