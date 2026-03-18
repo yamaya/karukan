@@ -265,6 +265,9 @@ pub struct KarukanSession {
     pub(crate) commit: CommitCache,
     /// Candidate list exposed to FFI.
     pub(crate) candidate_cache: CandidateCache,
+    /// Override data directory (for tests). When `Some`, paths are resolved
+    /// relative to this directory instead of `platform::paths`.
+    data_dir: Option<std::path::PathBuf>,
 }
 
 impl KarukanSession {
@@ -288,6 +291,7 @@ impl KarukanSession {
             preedit: PreeditCache::default(),
             commit: CommitCache::default(),
             candidate_cache: CandidateCache::default(),
+            data_dir: None,
         }
     }
 
@@ -298,8 +302,13 @@ impl KarukanSession {
     pub fn init_resources(&mut self) {
         use crate::platform::paths;
 
+        let base_dir = self.data_dir.clone();
+
         // System dictionary (optional — may not exist yet)
-        let dict_path = paths::system_dict_path();
+        let dict_path = base_dir
+            .as_ref()
+            .map(|d| d.join("dict.bin"))
+            .unwrap_or_else(|| paths::system_dict_path());
         if dict_path.exists() {
             match karukan_engine::Dictionary::load(&dict_path) {
                 Ok(d) => {
@@ -311,7 +320,10 @@ impl KarukanSession {
         }
 
         // User dictionaries (optional — scan user_dicts/ directory)
-        let user_dict_dir = paths::user_dict_dir();
+        let user_dict_dir = base_dir
+            .as_ref()
+            .map(|d| d.join("user_dicts"))
+            .unwrap_or_else(|| paths::user_dict_dir());
         if user_dict_dir.exists() {
             if let Ok(entries) = std::fs::read_dir(&user_dict_dir) {
                 let mut paths: Vec<std::path::PathBuf> = entries
@@ -351,7 +363,10 @@ impl KarukanSession {
         }
 
         // Learning cache (create empty if file doesn't exist yet)
-        let learning_path = paths::learning_cache_path();
+        let learning_path = base_dir
+            .as_ref()
+            .map(|d| d.join("learning.tsv"))
+            .unwrap_or_else(|| paths::learning_cache_path());
         self.learning = Some(if learning_path.exists() {
             match LearningCache::load(&learning_path, LearningCache::DEFAULT_MAX_ENTRIES) {
                 Ok(c) => {
@@ -412,7 +427,11 @@ impl KarukanSession {
             return;
         }
 
-        let path = crate::platform::paths::learning_cache_path();
+        let path = self
+            .data_dir
+            .as_ref()
+            .map(|d| d.join("learning.tsv"))
+            .unwrap_or_else(|| crate::platform::paths::learning_cache_path());
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
@@ -2629,8 +2648,9 @@ mod tests {
 
     // ── User dictionary tests ──
 
-    /// Helper: create a temp dir with user_dicts/ containing a TSV file.
-    fn setup_user_dict_env(entries: &[(&str, &str)]) -> tempfile::TempDir {
+    /// Helper: create a temp dir with user_dicts/ containing a TSV file,
+    /// and return a session with `data_dir` pointing to it.
+    fn setup_user_dict_session(entries: &[(&str, &str)]) -> (KarukanSession, tempfile::TempDir) {
         let tmp = tempfile::tempdir().unwrap();
         let user_dicts = tmp.path().join("user_dicts");
         std::fs::create_dir_all(&user_dicts).unwrap();
@@ -2641,28 +2661,23 @@ mod tests {
         }
         std::fs::write(user_dicts.join("test.tsv"), &content).unwrap();
 
-        // Point KARUKAN_DATA_DIR to our temp dir
-        unsafe { std::env::set_var("KARUKAN_DATA_DIR", tmp.path()) };
-        tmp
+        let mut s = KarukanSession::new();
+        s.data_dir = Some(tmp.path().to_path_buf());
+        (s, tmp)
     }
 
     #[test]
     fn test_user_dict_loaded() {
-        let _tmp = setup_user_dict_env(&[("かるかん", "Karukan"), ("てすと", "TestWord")]);
-
-        let mut s = KarukanSession::new();
+        let (mut s, _tmp) =
+            setup_user_dict_session(&[("かるかん", "Karukan"), ("てすと", "TestWord")]);
         s.init_resources();
 
         assert!(s.user_dict.is_some(), "user_dict should be loaded");
-
-        unsafe { std::env::remove_var("KARUKAN_DATA_DIR") };
     }
 
     #[test]
     fn test_user_dict_candidates_appear() {
-        let _tmp = setup_user_dict_env(&[("かるかん", "Karukan")]);
-
-        let mut s = KarukanSession::new();
+        let (mut s, _tmp) = setup_user_dict_session(&[("かるかん", "Karukan")]);
         s.init_resources();
 
         let candidates = s.collect_candidates("かるかん");
@@ -2671,15 +2686,11 @@ mod tests {
             "user dict entry should appear in candidates: {:?}",
             candidates
         );
-
-        unsafe { std::env::remove_var("KARUKAN_DATA_DIR") };
     }
 
     #[test]
     fn test_user_dict_priority_over_system_dict() {
-        let _tmp = setup_user_dict_env(&[("あ", "UserA")]);
-
-        let mut s = KarukanSession::new();
+        let (mut s, _tmp) = setup_user_dict_session(&[("あ", "UserA")]);
         s.init_resources();
 
         let candidates = s.collect_candidates("あ");
@@ -2694,8 +2705,6 @@ mod tests {
         if let (Some(u), Some(f)) = (user_pos, fallback_pos) {
             assert!(u < f, "user dict should come before fallback");
         }
-
-        unsafe { std::env::remove_var("KARUKAN_DATA_DIR") };
     }
 
     #[test]
@@ -2705,13 +2714,10 @@ mod tests {
         std::fs::create_dir_all(&user_dicts).unwrap();
         // No files in user_dicts/
 
-        unsafe { std::env::set_var("KARUKAN_DATA_DIR", tmp.path()) };
-
         let mut s = KarukanSession::new();
+        s.data_dir = Some(tmp.path().to_path_buf());
         s.init_resources();
         assert!(s.user_dict.is_none(), "no files → user_dict should be None");
-
-        unsafe { std::env::remove_var("KARUKAN_DATA_DIR") };
     }
 
     #[test]
@@ -2719,25 +2725,20 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         // Don't create user_dicts/ at all
 
-        unsafe { std::env::set_var("KARUKAN_DATA_DIR", tmp.path()) };
-
         let mut s = KarukanSession::new();
+        s.data_dir = Some(tmp.path().to_path_buf());
         s.init_resources();
         assert!(
             s.user_dict.is_none(),
             "missing dir → user_dict should be None"
         );
-
-        unsafe { std::env::remove_var("KARUKAN_DATA_DIR") };
     }
 
     // ── Live conversion + user dictionary tests ──
 
     #[test]
     fn test_live_conversion_uses_user_dict() {
-        let _tmp = setup_user_dict_env(&[("かるかん", "Karukan")]);
-
-        let mut s = KarukanSession::new();
+        let (mut s, _tmp) = setup_user_dict_session(&[("かるかん", "Karukan")]);
         s.init_resources();
 
         // Simulate typing "かるかん" → Composing state
@@ -2753,15 +2754,11 @@ mod tests {
             Some("Karukan"),
             "user dict should override model result in live conversion"
         );
-
-        unsafe { std::env::remove_var("KARUKAN_DATA_DIR") };
     }
 
     #[test]
     fn test_live_conversion_model_result_when_no_user_dict_match() {
-        let _tmp = setup_user_dict_env(&[("かるかん", "Karukan")]);
-
-        let mut s = KarukanSession::new();
+        let (mut s, _tmp) = setup_user_dict_session(&[("かるかん", "Karukan")]);
         s.init_resources();
 
         // Simulate typing "にほんご"
@@ -2777,15 +2774,11 @@ mod tests {
             Some("日本語"),
             "model result should be used when no user dict match"
         );
-
-        unsafe { std::env::remove_var("KARUKAN_DATA_DIR") };
     }
 
     #[test]
     fn test_live_conversion_learning_overrides_user_dict() {
-        let _tmp = setup_user_dict_env(&[("かるかん", "Karukan")]);
-
-        let mut s = KarukanSession::new();
+        let (mut s, _tmp) = setup_user_dict_session(&[("かるかん", "Karukan")]);
         s.init_resources();
 
         // Record a learning entry that should take priority over user dict
@@ -2804,7 +2797,5 @@ mod tests {
             Some("軽羹"),
             "learning cache should override user dict in live conversion"
         );
-
-        unsafe { std::env::remove_var("KARUKAN_DATA_DIR") };
     }
 }
