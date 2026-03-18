@@ -473,7 +473,8 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
         _ = karukan_select_candidate(session, idx)
 
         // パネルクリック後は client() が無効になるため currentSender を優先する。
-        let c = (currentSender ?? client()) as AnyObject
+        let c = (currentSender ?? client()) as AnyObject?
+        guard let c else { return }
 
         if karukan_has_commit(session) != 0 {
             // 通常コミット（全文節一括確定など）
@@ -885,8 +886,7 @@ final class KarukanInputController: IMKInputController, NSMenuItemValidation {
                     return
                 }
                 // deactivate 後はクライアントが無効なので操作しない
-                let client = self.currentSender ?? self.client()
-                guard client != nil else { return }
+                guard let client = self.currentSender ?? self.client() else { return }
 
                 logger.debug("apply_live_candidate: '\(autoCommitCandidate)' gen=\(gen)")
                 if karukan_apply_live_candidate(session, autoCommitCandidate, hiragana) != 0 {
