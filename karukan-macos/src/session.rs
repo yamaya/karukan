@@ -745,7 +745,12 @@ impl KarukanSession {
                 true
             }
             KarukanKey::Space if matches!(self.state, SessionState::Composing) => {
+                let had_live = self.live_candidate.is_some();
                 self.do_conversion_impl(false);
+                // ライブ変換中は既に変換結果が表示されているので、即座に候補パネルを表示する
+                if had_live {
+                    self.show_segment_candidates();
+                }
                 true
             }
             // ライブ変換中に Left: 最後の文節を選択した状態で文節変換に入る
