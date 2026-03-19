@@ -9,6 +9,13 @@
 //! standard location and is also the path that macOS App Sandbox redirects to
 //! for the App Extension container.
 //!
+//! # App Sandbox and user dictionaries
+//! Sandboxed processes see a container-redirected `~/Library/Application Support/`.
+//! User dictionaries placed at the real (non-container) path would be invisible.
+//! [`real_home_dir`] uses `getpwuid(getuid())` to obtain the actual home directory,
+//! bypassing the sandbox `$HOME` remapping, so that [`user_dict_dirs`] can return
+//! both the container path and the real path.
+//!
 //! # Testing / CI
 //! Set `KARUKAN_DATA_DIR` to any writable directory to override the default.
 //! This avoids polluting `~/Library/Application Support/` during test runs.
@@ -41,6 +48,45 @@ pub fn app_support_dir() -> PathBuf {
                 .join("Application Support")
         })
         .join("Karukan")
+}
+
+/// Returns the real home directory via `getpwuid(getuid())`.
+///
+/// In an App Sandbox, `$HOME` and `dirs::home_dir()` return the container path.
+/// This function calls POSIX `getpwuid` to get the actual home directory
+/// (e.g. `/Users/username`) regardless of sandboxing.
+fn real_home_dir() -> Option<PathBuf> {
+    unsafe {
+        let uid = libc::getuid();
+        let pw = libc::getpwuid(uid);
+        if pw.is_null() {
+            return None;
+        }
+        let dir = std::ffi::CStr::from_ptr((*pw).pw_dir);
+        dir.to_str().ok().map(PathBuf::from)
+    }
+}
+
+/// Returns candidate directories for user dictionaries.
+///
+/// Returns the container path first, then the real (non-container) path.
+/// Callers should scan all returned directories and merge results.
+pub fn user_dict_dirs() -> Vec<PathBuf> {
+    let container_dir = user_dict_dir();
+    let mut dirs = vec![container_dir.clone()];
+
+    if let Some(real_home) = real_home_dir() {
+        let real_dir = real_home
+            .join("Library")
+            .join("Application Support")
+            .join("Karukan")
+            .join("user_dicts");
+        if real_dir != container_dir {
+            dirs.push(real_dir);
+        }
+    }
+
+    dirs
 }
 
 /// Directory where GGUF model files are stored.

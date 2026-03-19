@@ -319,46 +319,58 @@ impl KarukanSession {
             }
         }
 
-        // User dictionaries (optional — scan user_dicts/ directory)
-        let user_dict_dir = base_dir
-            .as_ref()
-            .map(|d| d.join("user_dicts"))
-            .unwrap_or_else(|| paths::user_dict_dir());
-        if user_dict_dir.exists() {
-            if let Ok(entries) = std::fs::read_dir(&user_dict_dir) {
-                let mut paths: Vec<std::path::PathBuf> = entries
-                    .filter_map(|e| e.ok())
-                    .map(|e| e.path())
-                    .filter(|p| p.is_file())
-                    .collect();
-                paths.sort();
+        // User dictionaries (optional — scan user_dicts/ directories)
+        // In an App Sandbox the container path and the real path differ;
+        // scan both so that dictionaries placed at either location are found.
+        let search_dirs: Vec<std::path::PathBuf> = if let Some(ref d) = base_dir {
+            vec![d.join("user_dicts")]
+        } else {
+            paths::user_dict_dirs()
+        };
 
-                let mut dicts = Vec::new();
-                for path in &paths {
-                    match karukan_engine::Dictionary::load_auto(path) {
-                        Ok(dict) => {
-                            tracing::info!("Loaded user dictionary from {:?}", path);
-                            dicts.push(dict);
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to load user dictionary {:?}: {}", path, e)
-                        }
+        let mut dicts = Vec::new();
+        let mut loaded_files = std::collections::HashSet::new();
+        for user_dict_dir in &search_dirs {
+            if !user_dict_dir.exists() {
+                continue;
+            }
+            let Ok(entries) = std::fs::read_dir(user_dict_dir) else {
+                continue;
+            };
+            let mut file_paths: Vec<std::path::PathBuf> = entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| p.is_file())
+                .collect();
+            file_paths.sort();
+
+            for path in &file_paths {
+                // ファイル名で重複を排除（コンテナ内と実パスの両方に同じファイルがある場合）
+                let file_name = path.file_name().unwrap_or_default().to_owned();
+                if !loaded_files.insert(file_name) {
+                    tracing::info!("Skipping duplicate user dictionary {:?}", path);
+                    continue;
+                }
+                match karukan_engine::Dictionary::load_auto(path) {
+                    Ok(dict) => {
+                        tracing::info!("Loaded user dictionary from {:?}", path);
+                        dicts.push(dict);
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to load user dictionary {:?}: {}", path, e)
                     }
                 }
+            }
+        }
 
-                if !dicts.is_empty() {
-                    match karukan_engine::Dictionary::merge(dicts) {
-                        Ok(Some(merged)) => {
-                            tracing::info!(
-                                "User dictionaries merged ({} files)",
-                                paths.len()
-                            );
-                            self.user_dict = Some(merged);
-                        }
-                        Ok(None) => {}
-                        Err(e) => tracing::warn!("Failed to merge user dictionaries: {}", e),
-                    }
+        if !dicts.is_empty() {
+            match karukan_engine::Dictionary::merge(dicts) {
+                Ok(Some(merged)) => {
+                    tracing::info!("User dictionaries merged ({} files)", loaded_files.len());
+                    self.user_dict = Some(merged);
                 }
+                Ok(None) => {}
+                Err(e) => tracing::warn!("Failed to merge user dictionaries: {}", e),
             }
         }
 

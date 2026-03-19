@@ -1376,6 +1376,7 @@ dependencies = [
  "anyhow",
  "dirs 5.0.1",
  "karukan-engine",
+ "libc",
  "tempfile",
  "tracing",
  "tracing-oslog",
