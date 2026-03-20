@@ -920,10 +920,11 @@ fn test_convert_katakana_from_conversion_ffi() {
     s.push_char("a"); // "あ"
     s.push_key(KEY_SPACE); // → Conversion
 
+    // BunsetsuConversion 中の Ctrl+K → 選択文節の display をカタカナに変更（確定しない）
     assert!(s.push_key(KEY_CONVERT_KATAKANA));
-    assert!(s.has_commit());
-    assert_eq!(s.commit_text(), "ア");
-    assert!(s.is_empty());
+    assert!(!s.has_commit());
+    assert!(!s.is_empty());
+    assert_eq!(s.preedit(), "ア");
 }
 
 // ---------------------------------------------------------------------------

@@ -2215,11 +2215,11 @@ mod tests {
         let mut s = KarukanSession::new();
         s.push_char('a');
         s.push_key(KarukanKey::Space); // enter BunsetsuConversion（候補 lazy）
-        // lazy loading: ConvertHiragana は候補ロード不要で即動作
+        // BunsetsuConversion 中の Ctrl+J → 選択文節の display をひらがなに変更（確定しない）
         s.push_key(KarukanKey::ConvertHiragana);
-        assert!(s.commit.dirty);
-        assert_eq!(s.commit.text.to_str().unwrap(), "あ");
-        assert!(s.is_empty());
+        assert!(!s.commit.dirty);
+        assert!(matches!(s.state, SessionState::BunsetsuConversion(_)));
+        assert_eq!(s.preedit.text.to_str().unwrap(), "あ");
         assert!(s.candidate_cache.items.is_empty());
     }
 
@@ -2228,10 +2228,11 @@ mod tests {
         let mut s = KarukanSession::new();
         s.push_char('a');
         s.push_key(KarukanKey::Space);
+        // BunsetsuConversion 中の Ctrl+K → 選択文節の display をカタカナに変更（確定しない）
         s.push_key(KarukanKey::ConvertKatakana);
-        assert!(s.commit.dirty);
-        assert_eq!(s.commit.text.to_str().unwrap(), "ア");
-        assert!(s.is_empty());
+        assert!(!s.commit.dirty);
+        assert!(matches!(s.state, SessionState::BunsetsuConversion(_)));
+        assert_eq!(s.preedit.text.to_str().unwrap(), "ア");
     }
 
     #[test]
