@@ -476,12 +476,13 @@ fn test_unknown_key_does_not_consume() {
 fn test_space_key_triggers_conversion() {
     let s = TestSession::new();
     s.push_char("a"); // composing "あ"
-    // 1 回目の Space: BunsetsuConversion + 候補ロード
+    // 1 回目の Space: BunsetsuConversion（候補は lazy loading で未ロード）
     assert!(s.push_key(KEY_SPACE));
     assert!(!s.is_empty());
-    assert!(s.candidate_count() > 0, "candidates loaded on first Space");
-    // 2 回目の Space: 次候補へ
+    assert_eq!(s.candidate_count(), 0, "candidates not yet loaded after first Space");
+    // 2 回目の Space: show_segment_candidates で候補ロード
     assert!(s.push_key(KEY_SPACE));
+    assert!(s.candidate_count() > 0, "candidates loaded on second Space");
 }
 
 // ---------------------------------------------------------------------------
@@ -751,15 +752,15 @@ fn test_conversion_cursor_down_ffi() {
     for ch in "aiu".chars() {
         s.push_char(&ch.to_string());
     }
-    // 1 回目の Space: BunsetsuConversion + 候補ロード
+    // 1 回目の Space: BunsetsuConversion（候補は lazy loading で未ロード）
     s.push_key(KEY_SPACE);
-    let count = s.candidate_count();
-    assert!(count >= 1, "candidates loaded on first Space");
-    assert_eq!(s.candidate_cursor(), 0);
+    assert_eq!(s.candidate_count(), 0, "candidates not yet loaded after first Space");
 
-    // BunsetsuConversion では Down は show_segment_candidates() を呼ぶのみ。
-    // カーソル移動は Swift/IMKCandidates が担当するため Rust 側では cursor は変わらない。
+    // Down: show_segment_candidates() で候補ロード
     s.push_key(KEY_DOWN);
+    let count = s.candidate_count();
+    assert!(count >= 1, "candidates loaded on Down key");
+    // BunsetsuConversion では Rust 側の cursor は変わらない（Swift/IMKCandidates が担当）
     assert_eq!(
         s.candidate_cursor(),
         0,
@@ -771,16 +772,15 @@ fn test_conversion_cursor_down_ffi() {
 fn test_conversion_cursor_full_wrap_ffi() {
     let s = TestSession::new();
     s.push_char("a");
-    // Space: BunsetsuConversion + 候補ロード
+    // 1 回目の Space: BunsetsuConversion（候補 lazy）
+    s.push_key(KEY_SPACE);
+    // 2 回目の Space: 候補ロード
     s.push_key(KEY_SPACE);
 
     let count = s.candidate_count();
-    assert!(count >= 1, "candidates loaded on first Space");
+    assert!(count >= 1, "candidates loaded on second Space");
 
-    // count 回 Down を押すと先頭 (0) に戻る
-    for _ in 0..count {
-        s.push_key(KEY_DOWN);
-    }
+    // cursor は Swift/IMKCandidates 管理なので Rust 側は常に 0
     assert_eq!(s.candidate_cursor(), 0);
 }
 
@@ -821,19 +821,18 @@ fn test_select_candidate_in_range_commits_ffi() {
     s.push_char("a");
     // 1 回目の Space: BunsetsuConversion（候補 lazy）
     s.push_key(KEY_SPACE);
-    // 2 回目の Space: 候補 lazy ロード
+    // 2 回目の Space: 候補ロード
     s.push_key(KEY_SPACE);
 
-    // BunsetsuConversion では select_candidate は選択文節のdisplayを更新するだけ。
-    // コミットは、Return (commit_bunsetsu_all) で行う。
+    // select_candidate は選択文節の display を更新し、全文節を即コミットする。
     assert!(s.select_candidate(0));
     assert!(
-        !s.has_commit(),
-        "bunsetsu mode: select_candidate should NOT commit"
+        s.has_commit(),
+        "select_candidate should commit all segments"
     );
     assert!(
-        !s.is_empty(),
-        "should remain in BunsetsuConversion after selecting"
+        s.is_empty(),
+        "should be Empty after committing"
     );
 }
 

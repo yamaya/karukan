@@ -978,9 +978,9 @@ impl KarukanSession {
     /// hiragana and transitions to Composing so that `do_convert_*` can operate.
     fn restore_hiragana_if_conversion(&mut self) {
         let hiragana: Option<String> = match &self.state {
-            SessionState::BunsetsuConversion(conv) => Some(
-                conv.segments.iter().map(|s| s.hiragana.as_str()).collect(),
-            ),
+            SessionState::BunsetsuConversion(conv) => {
+                Some(conv.segments.iter().map(|s| s.hiragana.as_str()).collect())
+            }
             _ => None,
         };
         if let Some(hiragana) = hiragana {
@@ -1012,8 +1012,7 @@ impl KarukanSession {
                     format!("{}{}", self.input_buf.text, self.romaji.buffer())
                 }
                 ConvertPreview::Katakana => {
-                    let katakana =
-                        karukan_engine::kana::hiragana_to_katakana(&self.input_buf.text);
+                    let katakana = karukan_engine::kana::hiragana_to_katakana(&self.input_buf.text);
                     format!("{}{}", katakana, self.romaji.buffer())
                 }
                 ConvertPreview::Ascii => {
@@ -1086,10 +1085,7 @@ impl KarukanSession {
             };
         }
         let preedit_text: String = conv.segments.iter().map(|s| s.display.as_str()).collect();
-        let caret_bytes: usize = conv.segments[..=sel]
-            .iter()
-            .map(|s| s.display.len())
-            .sum();
+        let caret_bytes: usize = conv.segments[..=sel].iter().map(|s| s.display.len()).sum();
         self.preedit.text = CString::new(preedit_text.as_str()).unwrap_or_default();
         self.preedit.caret_bytes = caret_bytes as u32;
         self.preedit.dirty = true;
@@ -1152,7 +1148,11 @@ impl KarukanSession {
         }
 
         let n = segments.len();
-        let initial_selected = if start_at_last { n.saturating_sub(1) } else { 0 };
+        let initial_selected = if start_at_last {
+            n.saturating_sub(1)
+        } else {
+            0
+        };
 
         // candidate_cache は空（1 回目の Space では候補パネルを表示しない）。
         // 2 回目の Space / Down で show_segment_candidates が lazy ロードして表示する。
@@ -1183,13 +1183,13 @@ impl KarukanSession {
                 if n == 0 {
                     return;
                 }
-                let new_sel =
-                    (conv.selected as i32 + delta).clamp(0, n as i32 - 1) as usize;
+                let new_sel = (conv.selected as i32 + delta).clamp(0, n as i32 - 1) as usize;
                 conv.selected = new_sel;
-                let text: String =
-                    conv.segments.iter().map(|s| s.display.as_str()).collect();
-                let caret: usize =
-                    conv.segments[..=new_sel].iter().map(|s| s.display.len()).sum();
+                let text: String = conv.segments.iter().map(|s| s.display.as_str()).collect();
+                let caret: usize = conv.segments[..=new_sel]
+                    .iter()
+                    .map(|s| s.display.len())
+                    .sum();
                 (new_sel, text, caret)
             }
             _ => return,
@@ -1268,10 +1268,8 @@ impl KarukanSession {
                     );
                 }
 
-                let text: String =
-                    conv.segments.iter().map(|s| s.display.as_str()).collect();
-                let caret: usize =
-                    conv.segments[..=sel].iter().map(|s| s.display.len()).sum();
+                let text: String = conv.segments.iter().map(|s| s.display.as_str()).collect();
+                let caret: usize = conv.segments[..=sel].iter().map(|s| s.display.len()).sum();
                 (sel, text, caret)
             }
             _ => return,
@@ -1357,8 +1355,7 @@ impl KarukanSession {
     fn commit_bunsetsu_all(&mut self) {
         let (committed, learning_entries) = match &self.state {
             SessionState::BunsetsuConversion(conv) => {
-                let text: String =
-                    conv.segments.iter().map(|s| s.display.as_str()).collect();
+                let text: String = conv.segments.iter().map(|s| s.display.as_str()).collect();
                 let entries: Vec<(String, String)> = conv
                     .segments
                     .iter()
@@ -1551,8 +1548,20 @@ pub(crate) fn is_hiragana_char(c: char) -> bool {
 /// ```
 fn segment_hiragana(hiragana: &str) -> Vec<String> {
     const P2: &[&str] = &[
-        "から", "まで", "より", "って", "けど", "ので", "のに", "には", "では",
-        "とは", "でも", "とも", "しか", "ながら",
+        "から",
+        "まで",
+        "より",
+        "って",
+        "けど",
+        "ので",
+        "のに",
+        "には",
+        "では",
+        "とは",
+        "でも",
+        "とも",
+        "しか",
+        "ながら",
     ];
     const P1: &[char] = &[
         'は', 'が', 'を', 'に', 'で', 'へ', 'と', 'も', 'の', 'や', 'か',
@@ -2053,20 +2062,20 @@ mod tests {
     fn test_space_triggers_conversion() {
         let mut s = KarukanSession::new();
         s.push_char('a'); // "あ"
-        // 1 回目の Space: BunsetsuConversion + 候補ロードまで実行
+        // 1 回目の Space: BunsetsuConversion（候補は lazy loading で未ロード）
         s.push_key(KarukanKey::Space);
         assert!(!s.is_empty());
         assert!(
+            s.candidate_cache.items.is_empty(),
+            "candidates not yet loaded after first Space (lazy loading)"
+        );
+        // 2 回目の Space: show_segment_candidates で候補ロード
+        s.push_key(KarukanKey::Space);
+        assert!(
             !s.candidate_cache.items.is_empty(),
-            "candidates loaded on first Space"
+            "candidates loaded on second Space"
         );
         assert_eq!(s.candidate_cache.cursor, 0);
-        // 2 回目の Space: 次候補へ
-        let count = s.candidate_cache.items.len();
-        s.push_key(KarukanKey::Space);
-        if count > 1 {
-            assert_eq!(s.candidate_cache.cursor, 1);
-        }
     }
 
     #[test]
@@ -2099,27 +2108,35 @@ mod tests {
         "nihongo".chars().for_each(|c| {
             s.push_char(c);
         });
-        // 1 回目の Space: BunsetsuConversion + 候補ロード
+        // 1 回目の Space: BunsetsuConversion（候補は lazy loading で未ロード）
         s.push_key(KarukanKey::Space);
-        assert!(!s.candidate_cache.items.is_empty(), "candidates loaded on first Space");
-        let count = s.candidate_cache.items.len();
-        if count > 1 {
-            // 2 回目の Space: 次候補へ（cursor が進む）
-            s.push_key(KarukanKey::Space);
-            assert_eq!(s.candidate_cache.cursor, 1);
-        }
+        assert!(
+            s.candidate_cache.items.is_empty(),
+            "candidates not yet loaded after first Space (lazy loading)"
+        );
+        // 2 回目の Space: show_segment_candidates で候補ロード
+        s.push_key(KarukanKey::Space);
+        assert!(
+            !s.candidate_cache.items.is_empty(),
+            "candidates loaded on second Space"
+        );
     }
 
     #[test]
     fn test_select_candidate() {
         let mut s = KarukanSession::new();
         s.push_char('a');
-        // Space: BunsetsuConversion + 候補ロード
+        // 1 回目の Space: BunsetsuConversion（候補 lazy）
+        s.push_key(KarukanKey::Space);
+        // 2 回目の Space: show_segment_candidates で候補ロード
         s.push_key(KarukanKey::Space);
         let ok = s.select_candidate(0);
         assert!(ok);
         // select_candidate は選択文節の display を更新し、全文節を即コミットする。
-        assert!(s.commit.dirty, "select_candidate should commit all segments");
+        assert!(
+            s.commit.dirty,
+            "select_candidate should commit all segments"
+        );
         assert!(s.is_empty(), "should be Empty after committing");
     }
 
@@ -2189,72 +2206,25 @@ mod tests {
     fn test_convert_hiragana_from_conversion() {
         let mut s = KarukanSession::new();
         s.push_char('a');
-<<<<<<< HEAD
         s.push_key(KarukanKey::Space); // enter BunsetsuConversion（候補 lazy）
         // BunsetsuConversion 中の Ctrl+J → 選択文節の display をひらがなに変更（確定しない）
-||||||| parent of 87e18fd (feat: ライブ変換で初回のSpace入力で候補メニューを出す)
-        s.push_key(KarukanKey::Space); // enter BunsetsuConversion（候補 lazy）
-        // lazy loading: ConvertHiragana は候補ロード不要で即動作
-=======
-        s.push_key(KarukanKey::Space); // enter BunsetsuConversion + candidates loaded
-        // BunsetsuConversion 中の ConvertHiragana: display をひらがなに戻す（コミットしない）
->>>>>>> 87e18fd (feat: ライブ変換で初回のSpace入力で候補メニューを出す)
         s.push_key(KarukanKey::ConvertHiragana);
-<<<<<<< HEAD
         assert!(!s.commit.dirty);
         assert!(matches!(s.state, SessionState::BunsetsuConversion(_)));
         assert_eq!(s.preedit.text.to_str().unwrap(), "あ");
         assert!(s.candidate_cache.items.is_empty());
-||||||| parent of 87e18fd (feat: ライブ変換で初回のSpace入力で候補メニューを出す)
-        assert!(s.commit.dirty);
-        assert_eq!(s.commit.text.to_str().unwrap(), "あ");
-        assert!(s.is_empty());
-        assert!(s.candidate_cache.items.is_empty());
-=======
-        assert!(!s.commit.dirty, "ConvertHiragana in BunsetsuConversion should not commit");
-        assert_eq!(s.preedit.text.to_str().unwrap(), "あ");
-        assert!(!s.is_empty());
-        assert!(s.candidate_cache.items.is_empty());
-        // Return で確定
-        s.push_key(KarukanKey::Return);
-        assert!(s.commit.dirty);
-        assert_eq!(s.commit.text.to_str().unwrap(), "あ");
-        assert!(s.is_empty());
->>>>>>> 87e18fd (feat: ライブ変換で初回のSpace入力で候補メニューを出す)
     }
 
     #[test]
     fn test_convert_katakana_from_conversion() {
         let mut s = KarukanSession::new();
         s.push_char('a');
-<<<<<<< HEAD
         s.push_key(KarukanKey::Space);
         // BunsetsuConversion 中の Ctrl+K → 選択文節の display をカタカナに変更（確定しない）
-||||||| parent of 87e18fd (feat: ライブ変換で初回のSpace入力で候補メニューを出す)
-        s.push_key(KarukanKey::Space);
-=======
-        s.push_key(KarukanKey::Space); // enter BunsetsuConversion + candidates loaded
-        // BunsetsuConversion 中の ConvertKatakana: display をカタカナに更新（コミットしない）
->>>>>>> 87e18fd (feat: ライブ変換で初回のSpace入力で候補メニューを出す)
         s.push_key(KarukanKey::ConvertKatakana);
-<<<<<<< HEAD
         assert!(!s.commit.dirty);
         assert!(matches!(s.state, SessionState::BunsetsuConversion(_)));
         assert_eq!(s.preedit.text.to_str().unwrap(), "ア");
-||||||| parent of 87e18fd (feat: ライブ変換で初回のSpace入力で候補メニューを出す)
-        assert!(s.commit.dirty);
-        assert_eq!(s.commit.text.to_str().unwrap(), "ア");
-        assert!(s.is_empty());
-=======
-        assert!(!s.commit.dirty, "ConvertKatakana in BunsetsuConversion should not commit");
-        assert_eq!(s.preedit.text.to_str().unwrap(), "ア");
-        assert!(!s.is_empty());
-        // Return で確定
-        s.push_key(KarukanKey::Return);
-        assert!(s.commit.dirty);
-        assert_eq!(s.commit.text.to_str().unwrap(), "ア");
-        assert!(s.is_empty());
->>>>>>> 87e18fd (feat: ライブ変換で初回のSpace入力で候補メニューを出す)
     }
 
     #[test]
@@ -2294,7 +2264,9 @@ mod tests {
     #[test]
     fn test_convert_hiragana_cancels_live_first() {
         let mut s = KarukanSession::new();
-        "nihongo".chars().for_each(|c| { s.push_char(c); });
+        "nihongo".chars().for_each(|c| {
+            s.push_char(c);
+        });
         // Simulate live conversion
         s.live_candidate = Some("日本語".to_string());
         s.live_candidate_source = s.input_buf.text.clone();
@@ -2302,7 +2274,10 @@ mod tests {
         // 1st Ctrl+J: cancel live, show hiragana preedit (no commit)
         s.push_key(KarukanKey::ConvertHiragana);
         assert!(!s.commit.dirty, "1st Ctrl+J should not commit");
-        assert!(s.live_candidate.is_none(), "live_candidate should be cleared");
+        assert!(
+            s.live_candidate.is_none(),
+            "live_candidate should be cleared"
+        );
         assert_eq!(s.preedit.text.to_str().unwrap(), "にほんご");
         assert!(!s.is_empty(), "should remain in Composing");
 
@@ -2316,7 +2291,9 @@ mod tests {
     #[test]
     fn test_convert_katakana_cancels_live_first() {
         let mut s = KarukanSession::new();
-        "nihongo".chars().for_each(|c| { s.push_char(c); });
+        "nihongo".chars().for_each(|c| {
+            s.push_char(c);
+        });
         s.live_candidate = Some("日本語".to_string());
         s.live_candidate_source = s.input_buf.text.clone();
 
@@ -2338,7 +2315,9 @@ mod tests {
     fn test_convert_hiragana_no_live_commits_immediately() {
         // Without live conversion, Ctrl+J should commit immediately (no change)
         let mut s = KarukanSession::new();
-        "nihongo".chars().for_each(|c| { s.push_char(c); });
+        "nihongo".chars().for_each(|c| {
+            s.push_char(c);
+        });
         assert!(s.live_candidate.is_none());
         s.push_key(KarukanKey::ConvertHiragana);
         assert!(s.commit.dirty);
@@ -2350,7 +2329,9 @@ mod tests {
     fn test_convert_mode_switch_j_then_k() {
         // 日本語 (live) → Ctrl+J → にほんご (preedit) → Ctrl+K → ニホンゴ (preedit, NOT commit)
         let mut s = KarukanSession::new();
-        "nihongo".chars().for_each(|c| { s.push_char(c); });
+        "nihongo".chars().for_each(|c| {
+            s.push_char(c);
+        });
         s.live_candidate = Some("日本語".to_string());
         s.live_candidate_source = s.input_buf.text.clone();
 
@@ -2375,7 +2356,9 @@ mod tests {
     #[test]
     fn test_convert_mode_switch_k_then_j() {
         let mut s = KarukanSession::new();
-        "nihongo".chars().for_each(|c| { s.push_char(c); });
+        "nihongo".chars().for_each(|c| {
+            s.push_char(c);
+        });
         s.live_candidate = Some("日本語".to_string());
         s.live_candidate_source = s.input_buf.text.clone();
 
@@ -2397,7 +2380,9 @@ mod tests {
     #[test]
     fn test_convert_preview_cleared_by_char_input() {
         let mut s = KarukanSession::new();
-        "nihongo".chars().for_each(|c| { s.push_char(c); });
+        "nihongo".chars().for_each(|c| {
+            s.push_char(c);
+        });
         s.live_candidate = Some("日本語".to_string());
         s.live_candidate_source = s.input_buf.text.clone();
 
@@ -2597,7 +2582,10 @@ mod tests {
 
         // 子音 'k' を追加（romaji buffer に pending）
         s.push_char('k');
-        assert!(!s.romaji.buffer().is_empty(), "romaji buffer should have 'k'");
+        assert!(
+            !s.romaji.buffer().is_empty(),
+            "romaji buffer should have 'k'"
+        );
 
         // Return でコミット → ASCII 'k' が混入しないことを確認
         s.push_key(KarukanKey::Return);
