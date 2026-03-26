@@ -648,16 +648,24 @@ impl KarukanSession {
 
         // Build preedit:
         // prev_live がある場合（例: "今日"）はそれをベースにする。
-        //   - 新しいかなが生成された場合: prev_live + new_hiragana + romaji_buf
-        //     例: "今日" + "は" + "" = "今日は"（"今日h" → "今日は" に直接遷移）
-        //   - 子音のみ追加された場合: prev_live + romaji_buf
-        //     例: "今日" + "h" = "今日h"
-        // これにより文字数が一時的に減る中間状態（"今日" のみ）を避け、
+        // live_candidate_source 以降に追加された全文字（tail）を付加する。
+        //   例: live="今日", source="きょう", input_buf="きょうは" → tail="は"
+        //        preedit = "今日" + "は" + romaji_buf
+        // new_hiragana（今回の1打鍵分のデルタ）ではなく tail を使うことで、
+        // 高速入力時に live_candidate 更新前に複数回 push_char が呼ばれても
+        // 中間のかなが欠落しない。
+        // これにより文字数が一時的に減る中間状態を避け、
         // カーソルの前後ジャンプを防ぐ。推論完了後は apply_live_candidate が上書きする。
         // prev_live がなければ従来通り input_buf ひらがな + ローマ字バッファ。
         let romaji_buf = self.romaji.buffer().to_string();
         let preedit_text = if let Some(ref live) = prev_live {
-            format!("{}{}{}", live, new_hiragana, romaji_buf)
+            if self.input_buf.text.starts_with(&self.live_candidate_source) {
+                let tail = &self.input_buf.text[self.live_candidate_source.len()..];
+                format!("{}{}{}", live, tail, romaji_buf)
+            } else {
+                // source がプレフィクスでない（stale）→ ひらがなフォールバック
+                format!("{}{}", self.input_buf.text, romaji_buf)
+            }
         } else {
             format!("{}{}", self.input_buf.text, romaji_buf)
         };
