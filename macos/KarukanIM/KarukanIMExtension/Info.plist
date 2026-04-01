@@ -24,13 +24,7 @@
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>CFBundleShortVersionString</key>
-<<<<<<< HEAD
 	<string>1.1.2</string>
-||||||| parent of f669cdf (chore: bump version)
-	<string>$(MARKETING_VERSION)</string>
-=======
-	<string>1.1.0</string>
->>>>>>> f669cdf (chore: bump version)
 	<key>CFBundleGetInfoString</key>
 	<string>$(MARKETING_VERSION) ($(CURRENT_PROJECT_VERSION))</string>
 	<key>ComponentCategory</key>
