@@ -1587,7 +1587,9 @@ fn segment_hiragana(hiragana: &str) -> Vec<String> {
 
     while i < n {
         // 2文字助詞チェック（助詞の直後にさらに文字が必要）
-        if i + 1 < n && i + 2 < n {
+        // 「ん」で始まる日本語の単語は存在しないため、分割後の次セグメントが
+        // 「ん」始まりになる場合は助詞ではなく語の一部と判断してスキップする。
+        if i + 1 < n && i + 2 < n && chars[i + 2] != 'ん' {
             let two: String = chars[i..=i + 1].iter().collect();
             if P2.contains(&two.as_str()) {
                 segments.push(chars[start..=i + 1].iter().collect());
@@ -1597,7 +1599,7 @@ fn segment_hiragana(hiragana: &str) -> Vec<String> {
             }
         }
         // 1文字助詞チェック（助詞の直後にさらに文字が必要）
-        if i + 1 < n && P1.contains(&chars[i]) {
+        if i + 1 < n && P1.contains(&chars[i]) && chars[i + 1] != 'ん' {
             segments.push(chars[start..=i].iter().collect());
             start = i + 1;
             i = start + 1;
@@ -2864,6 +2866,70 @@ mod tests {
             s.live_candidate.as_deref(),
             Some("軽羹"),
             "learning cache should override user dict in live conversion"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // segment_hiragana tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn test_segment_single_char() {
+        assert_eq!(segment_hiragana("あ"), vec!["あ"]);
+    }
+
+    #[test]
+    fn test_segment_no_particle() {
+        assert_eq!(segment_hiragana("きゅうでん"), vec!["きゅうでん"]);
+    }
+
+    #[test]
+    fn test_segment_particle_de_before_n() {
+        // 「で」の直後が「ん」の場合は助詞ではなく語の一部（例: 給電、本殿）
+        assert_eq!(segment_hiragana("ほんでん"), vec!["ほんでん"]);
+    }
+
+    #[test]
+    fn test_segment_particle_ha() {
+        assert_eq!(
+            segment_hiragana("きょうはいいてんき"),
+            vec!["きょうは", "いいてんき"]
+        );
+    }
+
+    #[test]
+    fn test_segment_particle_wo() {
+        assert_eq!(
+            segment_hiragana("ほんをよむ"),
+            vec!["ほんを", "よむ"]
+        );
+    }
+
+    #[test]
+    fn test_segment_particle_at_end_no_split() {
+        // 末尾が助詞のみの場合は分割しない
+        assert_eq!(segment_hiragana("わたしは"), vec!["わたしは"]);
+    }
+
+    #[test]
+    fn test_segment_particle_ni_before_n() {
+        // 「に」の直後が「ん」→ 助詞ではなく語の一部（例: にんじん の途中）
+        assert_eq!(segment_hiragana("かにんべん"), vec!["かにんべん"]);
+    }
+
+    #[test]
+    fn test_segment_two_char_particle() {
+        assert_eq!(
+            segment_hiragana("えきからあるく"),
+            vec!["えきから", "あるく"]
+        );
+    }
+
+    #[test]
+    fn test_segment_multiple_particles() {
+        assert_eq!(
+            segment_hiragana("わたしはきょうでかける"),
+            vec!["わたしは", "きょうで", "かける"]
         );
     }
 }
