@@ -24,7 +24,7 @@
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>CFBundleShortVersionString</key>
-	<string>$(MARKETING_VERSION)</string>
+	<string>1.1.1</string>
 	<key>CFBundleGetInfoString</key>
 	<string>$(MARKETING_VERSION) ($(CURRENT_PROJECT_VERSION))</string>
 	<key>ComponentCategory</key>
