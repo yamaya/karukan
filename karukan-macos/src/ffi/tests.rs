@@ -867,7 +867,13 @@ fn test_convert_hiragana_key_ffi() {
     }
     assert_eq!(s.preedit(), "にほんご");
 
+    // Ctrl+J: プレビューのみ（確定しない）
     assert!(s.push_key(KEY_CONVERT_HIRAGANA));
+    assert!(!s.has_commit());
+    assert_eq!(s.preedit(), "にほんご");
+    assert!(!s.is_empty());
+    // Enter で確定
+    assert!(s.push_key(KEY_RETURN));
     assert!(s.has_commit());
     assert_eq!(s.commit_text(), "にほんご");
     assert!(s.is_empty());
@@ -880,7 +886,13 @@ fn test_convert_katakana_key_ffi() {
         s.push_char(&ch.to_string());
     }
 
+    // Ctrl+K: プレビューのみ（確定しない）
     assert!(s.push_key(KEY_CONVERT_KATAKANA));
+    assert!(!s.has_commit());
+    assert_eq!(s.preedit(), "ニホンゴ");
+    assert!(!s.is_empty());
+    // Enter で確定
+    assert!(s.push_key(KEY_RETURN));
     assert!(s.has_commit());
     assert_eq!(s.commit_text(), "ニホンゴ");
     assert!(s.is_empty());
@@ -894,7 +906,13 @@ fn test_convert_ascii_key_ffi() {
         s.push_char(&ch.to_string());
     }
 
+    // Ctrl+;: プレビューのみ（確定しない）
     assert!(s.push_key(KEY_CONVERT_ASCII));
+    assert!(!s.has_commit());
+    assert_eq!(s.preedit(), "nihonngo");
+    assert!(!s.is_empty());
+    // Enter で確定
+    assert!(s.push_key(KEY_RETURN));
     assert!(s.has_commit());
     assert_eq!(s.commit_text(), "nihonngo");
     assert!(s.is_empty());
